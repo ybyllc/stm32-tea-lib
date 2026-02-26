@@ -167,6 +167,18 @@ hsc_Lib/
 - C99标准
 - GB2312中文编码
 
+## AI 协作入口
+
+- 主规则（L1）：`AI_PROMPT.md`
+- 模块规则（L2）：`AI_PROMPT_L2.md`
+- 沉淀记录：`AI_PROMPT_CHANGELOG.md`
+- 硬约束入口：`AGENTS.md`
+- 任务模板：`AI_TASK_TEMPLATE.md`
+- 归档参考（历史笔记，禁止作为执行提示词）：`AI_note.md`、`AI_note2.md`
+- 自维护机制：每个任务收尾执行“精华沉淀判定”，必要时更新 `AI_PROMPT.md` / `AI_PROMPT_L2.md` 并记录到 `AI_PROMPT_CHANGELOG.md`
+- 提示词一致性检查：
+  `./scripts/check_ai_prompt.ps1`
+
 ## 移植指南
 
 1. 复制 `Tea_Lib` 到项目
