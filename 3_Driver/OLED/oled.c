@@ -14,9 +14,13 @@
 **************************************************************************************************/
 
 #include "oled.h"
+#include "oled_ui_mode.h"
 #include "stdlib.h"
 #include "oledfont.h"
 #include "common.h"
+
+#if OLED_UI_MODE == OLED_UI_MODE_TRADITIONAL
+
 // OLED显存
 // 存储格式如下.
 //[0]0 1 2 3 ... 127
@@ -115,7 +119,7 @@ static void OLED_Write_IIC_Data(unsigned char IIC_Data)
 	OLED_IIC_Wait_Ack();
 	OLED_IIC_Stop();
 }
-void OLED_WR_Byte(unsigned dat, unsigned cmd)
+static void OLED_WR_Byte(unsigned dat, unsigned cmd)
 {
 	if (cmd)
 	{
@@ -572,3 +576,5 @@ void OLED_DrawFillRectangle(u8 x1, u8 y1, u8 x2, u8 y2, u8 color)
 		}
 	}
 }
+
+#endif
