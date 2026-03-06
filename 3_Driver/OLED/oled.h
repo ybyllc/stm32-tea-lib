@@ -15,6 +15,7 @@
 #define __OLED_H
 #include "common.h"
 #include "stdlib.h"
+#include "oled_ui_mode.h"
 
 // 屏幕尺寸
 #define X_WIDTH 128
@@ -36,7 +37,6 @@
 #define IIC_SLAVE_ADDR 0x78 // IIC slave device address // 二进制 1111000
 
 // OLED函数声明
-void OLED_WR_Byte(unsigned dat, unsigned cmd);
 void OLED_Display_On(void);
 void OLED_Display_Off(void);
 void OLED_Init(void);
