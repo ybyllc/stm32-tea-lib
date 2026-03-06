@@ -1,4 +1,5 @@
 # AGENTS.md
+<!-- check anchors: L1 + L2- ; L1 > L2 ; PROMPT_SELF_MAINTENANCE -->
 
 ## 适用范围
 
