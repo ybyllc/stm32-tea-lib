@@ -38,6 +38,7 @@
   */
 
 #include "ax_ps2.h"
+#include <stdio.h>
 //#include "ax_delay.h"
 //#include "ax_sys.h"
 
@@ -72,9 +73,9 @@ void AX_PS2_Init(void)
     HAL_GPIO_Init(AX_PS2_PORT, &GPIO_InitStruct);
     
     // 初始化默认状态
-    CS_H();
-    CLK_H();
-    CMD_L();
+    AX_CS_H();
+    AX_CLK_H();
+    AX_CMD_L();
 }
 
 
@@ -90,7 +91,7 @@ static uint8_t PS2_ReadWriteData_Debug(uint8_t cmd, uint8_t *bit_data)
 	uint8_t bit_idx = 0;
 	
 	// CLK初始状态为高
-	CLK_H();
+	AX_CLK_H();
 	AX_Delayus(2);
 	
 	//写入命令，同时读取一个字节数据
@@ -98,19 +99,19 @@ static uint8_t PS2_ReadWriteData_Debug(uint8_t cmd, uint8_t *bit_data)
 	{
 		// 设置 CMD 数据
 		if(ref&cmd)
-			CMD_H();
+			AX_CMD_H();
 		else
-			CMD_L();
+			AX_CMD_L();
 		
 		// CLK保持高电平一段时间
 		AX_Delayus(2);
 		
 		// CLK下降沿 - 数据有效
-		CLK_L();
+		AX_CLK_L();
 		AX_Delayus(8);
 		
 		// 在 CLK 低电平时读取数据（下降沿后）
-		uint8_t bit = DI();
+		uint8_t bit = AX_DI_READ();
 		if(bit)
 			res |= ref;
 		
@@ -124,7 +125,7 @@ static uint8_t PS2_ReadWriteData_Debug(uint8_t cmd, uint8_t *bit_data)
 		AX_Delayus(6);
 		
 		// CLK回到高电平
-		CLK_H();
+		AX_CLK_H();
 	}
 
 	//返回读取到的数据
@@ -152,7 +153,7 @@ void AX_PS2_ScanKey(JOYSTICK_TypeDef *JoystickStruct)
 	uint8_t i;
 	
 	//启用手柄
-	CS_L();
+	AX_CS_L();
 	AX_Delayus(20);  // CS拉低后等待一段时间，让手柄准备就绪
 	
 	//读取PS2数据
@@ -162,7 +163,7 @@ void AX_PS2_ScanKey(JOYSTICK_TypeDef *JoystickStruct)
 	}
 	
 	//关闭启用
-	CS_H();
+	AX_CS_H();
 	AX_Delayus(20);  // CS拉高后等待
 
 	//赋值给结构体
@@ -234,7 +235,7 @@ void AX_PS2_ScanKeyVibration(JOYSTICK_TypeDef *JoystickStruct, uint8_t motor1, u
 	uint8_t i;
 	
 	//启用手柄
-	CS_L();
+	AX_CS_L();
 	AX_Delayus(20);  // CS拉低后等待一段时间，让手柄准备就绪
 	
 	//发送命令并读取数据（前3个字节固定，第4、5字节为震动参数）
@@ -249,7 +250,7 @@ void AX_PS2_ScanKeyVibration(JOYSTICK_TypeDef *JoystickStruct, uint8_t motor1, u
 	PS2_data[8] = PS2_ReadWriteData(0x00);  // 空字节
 	
 	//关闭启用
-	CS_H();
+	AX_CS_H();
 	AX_Delayus(20);  // CS拉高后等待
 
 	//赋值给结构体
@@ -284,7 +285,7 @@ void AX_PS2_DebugScan(void)
 		   HAL_GPIO_ReadPin(AX_PS2_PORT, AX_PS2_CLK_PIN));
 	
 	//启用手柄
-	CS_L();
+	AX_CS_L();
 	AX_Delayus(10);
 	
 	printf("[PS2 Debug] After CS_L: DAT=%d\r\n", HAL_GPIO_ReadPin(AX_PS2_PORT, AX_PS2_DI_PIN));
@@ -303,7 +304,7 @@ void AX_PS2_DebugScan(void)
 	}
 	
 	//关闭启用
-	CS_H();
+	AX_CS_H();
 	
 	printf("[PS2 Debug] After CS_H: DAT=%d\r\n", HAL_GPIO_ReadPin(AX_PS2_PORT, AX_PS2_DI_PIN));
 	
@@ -330,14 +331,14 @@ void AX_PS2_DebugScan(void)
   */
 static void AX_PS2_ShortPoll(void)
 {
-  CS_L();
+  AX_CS_L();
   AX_Delayus(10);
   PS2_ReadWriteData(0x01);
   PS2_ReadWriteData(0x42);
   PS2_ReadWriteData(0X00);
   PS2_ReadWriteData(0x00);
   PS2_ReadWriteData(0x00);
-  CS_H();
+  AX_CS_H();
   AX_Delayus(10);
 }
 
@@ -348,7 +349,7 @@ static void AX_PS2_ShortPoll(void)
   */
 static void AX_PS2_EnterConfing(void)
 {
-  CS_L();
+  AX_CS_L();
   AX_Delayus(10);
   PS2_ReadWriteData(0x01);
   PS2_ReadWriteData(0x43);
@@ -359,7 +360,7 @@ static void AX_PS2_EnterConfing(void)
   PS2_ReadWriteData(0X00);
   PS2_ReadWriteData(0X00);
   PS2_ReadWriteData(0X00);
-  CS_H();
+  AX_CS_H();
   AX_Delayus(10);
 }
 
@@ -370,7 +371,7 @@ static void AX_PS2_EnterConfing(void)
   */
 static void AX_PS2_TurnOnAnalogMode(void)
 {
-  CS_L();
+  AX_CS_L();
   PS2_ReadWriteData(0x01);
   PS2_ReadWriteData(0x44);
   PS2_ReadWriteData(0X00);
@@ -380,7 +381,7 @@ static void AX_PS2_TurnOnAnalogMode(void)
   PS2_ReadWriteData(0X00);
   PS2_ReadWriteData(0X00);
   PS2_ReadWriteData(0X00);
-  CS_H();
+  AX_CS_H();
   AX_Delayus(10);
 }
 
@@ -391,14 +392,14 @@ static void AX_PS2_TurnOnAnalogMode(void)
   */
 static void AX_PS2_VibrationMode(void)
 {
-  CS_L();
+  AX_CS_L();
   AX_Delayus(10);
   PS2_ReadWriteData(0x01);
   PS2_ReadWriteData(0x4D);
   PS2_ReadWriteData(0X00);
   PS2_ReadWriteData(0x00);
   PS2_ReadWriteData(0X01);
-  CS_H();
+  AX_CS_H();
   AX_Delayus(10);
 }
 
@@ -409,7 +410,7 @@ static void AX_PS2_VibrationMode(void)
   */
 static void AX_PS2_ExitConfing(void)
 {
-  CS_L();
+  AX_CS_L();
   AX_Delayus(10);
   PS2_ReadWriteData(0x01);
   PS2_ReadWriteData(0x43);
@@ -420,7 +421,7 @@ static void AX_PS2_ExitConfing(void)
   PS2_ReadWriteData(0x5A);
   PS2_ReadWriteData(0x5A);
   PS2_ReadWriteData(0x5A);
-  CS_H();
+  AX_CS_H();
   AX_Delayus(10);
 }
 
@@ -448,7 +449,7 @@ void AX_PS2_SetInit(void)
   */
 void AX_PS2_Vibration(uint8_t motor1, uint8_t motor2)
 {
-   CS_L();
+   AX_CS_L();
    AX_Delayus(10);
    PS2_ReadWriteData(0x01); // 发送启动命令
    PS2_ReadWriteData(0x42); // 发送请求数据
@@ -459,7 +460,7 @@ void AX_PS2_Vibration(uint8_t motor1, uint8_t motor2)
    PS2_ReadWriteData(0X00);
    PS2_ReadWriteData(0X00);
    PS2_ReadWriteData(0X00);
-   CS_H();
+   AX_CS_H();
    AX_Delayus(10);
 }
 

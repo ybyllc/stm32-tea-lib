@@ -56,13 +56,13 @@
 #define AX_Delayus(n) Delay_us(n)
 
 // 使用HAL库函数操作GPIO
-#define DI()   HAL_GPIO_ReadPin(AX_PS2_PORT, AX_PS2_DI_PIN)           //输入 DAT
-#define CMD_H() HAL_GPIO_WritePin(AX_PS2_PORT, AX_PS2_CMD_PIN, GPIO_PIN_SET)        //命令位高
-#define CMD_L() HAL_GPIO_WritePin(AX_PS2_PORT, AX_PS2_CMD_PIN, GPIO_PIN_RESET)        //命令位低
-#define CS_H() HAL_GPIO_WritePin(AX_PS2_PORT, AX_PS2_CS_PIN, GPIO_PIN_SET)       //CS拉高
-#define CS_L() HAL_GPIO_WritePin(AX_PS2_PORT, AX_PS2_CS_PIN, GPIO_PIN_RESET)       //CS拉低
-#define CLK_H() HAL_GPIO_WritePin(AX_PS2_PORT, AX_PS2_CLK_PIN, GPIO_PIN_SET)      //时钟拉高
-#define CLK_L() HAL_GPIO_WritePin(AX_PS2_PORT, AX_PS2_CLK_PIN, GPIO_PIN_RESET)      //时钟拉低
+#define AX_DI_READ() HAL_GPIO_ReadPin(AX_PS2_PORT, AX_PS2_DI_PIN)           //输入 DAT
+#define AX_CMD_H() HAL_GPIO_WritePin(AX_PS2_PORT, AX_PS2_CMD_PIN, GPIO_PIN_SET)        //命令位高
+#define AX_CMD_L() HAL_GPIO_WritePin(AX_PS2_PORT, AX_PS2_CMD_PIN, GPIO_PIN_RESET)        //命令位低
+#define AX_CS_H() HAL_GPIO_WritePin(AX_PS2_PORT, AX_PS2_CS_PIN, GPIO_PIN_SET)       //CS拉高
+#define AX_CS_L() HAL_GPIO_WritePin(AX_PS2_PORT, AX_PS2_CS_PIN, GPIO_PIN_RESET)       //CS拉低
+#define AX_CLK_H() HAL_GPIO_WritePin(AX_PS2_PORT, AX_PS2_CLK_PIN, GPIO_PIN_SET)      //时钟拉高
+#define AX_CLK_L() HAL_GPIO_WritePin(AX_PS2_PORT, AX_PS2_CLK_PIN, GPIO_PIN_RESET)      //时钟拉低
 
 
 //PS2手柄数据结构体	 
@@ -80,7 +80,8 @@ typedef struct
 /*** PS2游戏手柄驱动函数 **********/
 void AX_PS2_Init(void);  //PS2初始化
 void AX_PS2_ScanKey(JOYSTICK_TypeDef* JoystickStruct);//PS2读取按键和摇杆数据
-void AX_PS2_ScanKey_Deadzone(JOYSTICK_TypeDef *JoystickStruct);//PS2读取按键和摇杆数据（带死区处理）
+void AX_PS2_ScanKey_Deadzone(JOYSTICK_TypeDef *JoystickStruct);
+void AX_PS2_ScanKeyVibration(JOYSTICK_TypeDef *JoystickStruct, uint8_t motor1, uint8_t motor2);
 void AX_PS2_SetInit(void);  //PS2设置初始化（开启模拟模式和震动）
 void AX_PS2_Vibration(uint8_t motor1, uint8_t motor2); //PS2震动控制
 void AX_PS2_DebugScan(void); //PS2详细调试扫描
