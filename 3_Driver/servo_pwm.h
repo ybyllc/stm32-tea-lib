@@ -17,8 +17,8 @@
 #define SERVO_PWM_MAX       2500    // 2ms最大脉宽
 #define SERVO_PWM_MID       1500    // 1.5ms中位脉宽
 
-// 频率高性能模式
-#define SERVO_HIGHPERF_MODE 1
+// 高频率模式，反应更快
+#define SERVO_HIGHFREQ_MODE 1
 
 /**
  * @brief  舵机/航模PWM初始化

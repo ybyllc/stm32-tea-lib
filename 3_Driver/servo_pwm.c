@@ -9,7 +9,7 @@ void Servo_Pwm_Init(void)
 {
 	// 配置TIM3为50Hz (48MHz / 48 / 20000 = 50Hz)
     __HAL_TIM_SET_PRESCALER(&htim3, 48 - 1);
-#ifndef SERVO_HIGHPERF_MODE
+#ifndef SERVO_HIGHFREQ_MODE // 高频率模式，反应更快 
     __HAL_TIM_SET_AUTORELOAD(&htim3, 20000 - 1);
 #else
     __HAL_TIM_SET_AUTORELOAD(&htim3, 15000 - 1);//信号频率提升到66hz
