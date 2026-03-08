@@ -22,7 +22,7 @@ typedef enum {
     ICM_TYPE_42670,     // WHO_AM_I = 0x41
     ICM_TYPE_42688,     // WHO_AM_I = 0x47
     ICM_TYPE_42605,     // WHO_AM_I = 0x47 (与42688相同)
-} ICM_Type;
+} ICM_TYPE;  // 修改为全大写以匹配使用
 
 // ICM系列引脚配置结构体
 typedef struct {

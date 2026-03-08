@@ -1,4 +1,5 @@
 #include "gyro_icm.h"
+#include <stdio.h>  // 添加 printf 支持
 
 // 全局设备实例
 static ICM_Device icm_dev;
