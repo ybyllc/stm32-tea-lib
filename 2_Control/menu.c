@@ -6,6 +6,7 @@
 
 #include "menu.h"
 #include "menu_input.h"
+#include "oled_ui_mode.h"
 #include "wit_gyro_sdk.h"
 #include "icm42670.h"
 #include "TOF_VL53L0X.h"
@@ -62,6 +63,8 @@ static GyroType current_gyro_type = GYRO_TYPE_NONE;
 
 // 外部函数声明
 extern void Gryo_Update(void);
+extern u8 VL53L0X_IsReady(void);
+extern u16 TOF_QuickTest(void);
 
 // 静态函数声明
 static void Menu_DisplayGyroPage(void);
@@ -85,30 +88,30 @@ static void Menu_DisplayCurrentPage(void);
  * @param value: 摇杆值 (0-255, 128为中位)
  */
 static void DrawStickBar(u8 x, u8 y, u8 width, u8 value) {
-    u8 height = 8;  // 进度条高度
+    u8 height = 9;  // 进度条高度
     u8 center_x = x + width / 2;  // 中心位置（中位点）
     
     // 绘制外框
-    OLED_DrawRectangle(x, y, x + width, y + height, 1);
+    OLED_DrawRectangle(x, y, x + width - 1, y + height - 1, 1);
     
     // 计算填充位置（value: 0-255 -> 0-width）
     // 128为中位，小于128向左填充，大于128向右填充
     if (value > 128) {
         // 向右填充
-        u8 fill_width = ((value - 128) * (width / 2)) / 127;
+        u8 fill_width = ((value - 128) * (width / 2)) / 128;
         if (fill_width > 0) {
-            OLED_DrawFillRectangle(center_x, y + 1, center_x + fill_width, y + height - 1, 1);
+            OLED_DrawFillRectangle(center_x, y + 1, center_x + fill_width, y + height - 2, 1);
         }
     } else if (value < 128) {
         // 向左填充
         u8 fill_width = ((128 - value) * (width / 2)) / 128;
         if (fill_width > 0) {
-            OLED_DrawFillRectangle(center_x - fill_width, y + 1, center_x, y + height - 1, 1);
+            OLED_DrawFillRectangle(center_x - fill_width, y + 1, center_x, y + height - 2, 1);
         }
     }
     
     // 绘制中心线
-    OLED_DrawLine(center_x, y, center_x, y + height, 1);
+    OLED_DrawLine(center_x, y, center_x, y + height - 1, 1);
 }
 
 /**
@@ -303,13 +306,13 @@ void Menu_Init(void) {
     menuState.currentItem = 0;
     menuState.lastEncoderCount = 0;
     menuState.isInMenu = 1;
-    
-    // 初始化OLED
-    OLED_Init();
-    OLED_Clear(0);
-    
+
     // 初始化输入处理
     MenuInput_Init();
+
+    // 传统模式初始化OLED
+    OLED_Init();
+    OLED_Clear(0);
     
     // 显示初始页面
     Menu_DisplayMainMenu();
@@ -345,6 +348,11 @@ static void Menu_RunMainTask(void) {
  * @note 在主循环中调用
  */
 void Menu_Run(void) {
+#if OLED_UI_MODE == OLED_UI_MODE_LVGL
+    MenuUiMenLvg_Run();
+    return;
+#endif
+
     // 初始化PC6按键
     static uint8_t key_pc6_initialized = 0;
     if (!key_pc6_initialized) {
@@ -594,7 +602,7 @@ static void Menu_DisplayRemoteKeyTestPage(void) {
     
     // 显示标题
     OLED_ShowString(0, 0, "Remote Key Test", 16);
-    
+
     // 首次进入时初始化遥控器
     if (!remote_key_initialized) {
         Menu_InitRemoteKey();
@@ -649,7 +657,7 @@ static void Menu_DisplayRemoteKeyTestPage(void) {
     
     // 显示提示
     OLED_ShowString(0, 7, "Press keys!", 12);
-    
+
     OLED_Refresh();
 }
 
@@ -759,10 +767,10 @@ static void Menu_DisplayEncoderTestPage(void) {
     
     // 显示编码器累计值
     char str[20];
-    sprintf(str, "Enc1:%6ld", encoder1_total_count);
+    sprintf(str, "Enc1:%6d", encoder1_total_count);
     OLED_ShowString(0, 2, str, 16);
     
-    sprintf(str, "Enc2:%6ld", encoder2_total_count);
+    sprintf(str, "Enc2:%6d", encoder2_total_count);
     OLED_ShowString(0, 4, str, 16);
     
     // 显示提示信息
@@ -806,7 +814,7 @@ static void Menu_DisplayAdcTestPage(void) {
     OLED_ShowString(0, 2, str, 16);
     
     // 显示ADC原始值
-    sprintf(str, "ADC Value:%4lu", adc_value);
+    sprintf(str, "ADC Value:%4u", adc_value);
     OLED_ShowString(0, 4, str, 16);
     
     // 显示提示信息
@@ -1009,7 +1017,7 @@ static void Menu_DisplayServoPWMPage(void) {
     static MenuPageType last_page = MENU_PAGE_MAIN;
     static uint8_t servo_initialized = 0;
     
-    // 检测页面切换（从 SERVO_PWM 切换到其他页面）
+    // 检测页面退出（退出到其他页面）
     if (last_page == MENU_PAGE_SERVO_PWM && menuState.currentPage != MENU_PAGE_SERVO_PWM) {
         Servo_Pwm_StopAll();
     }
