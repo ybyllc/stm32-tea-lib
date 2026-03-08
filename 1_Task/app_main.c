@@ -10,7 +10,7 @@
 // #include "led.h"           // 指示灯
 #include "wit_gyro_sdk.h"    // 串口陀螺仪
 #include "icm42670.h"         // ICM42670 陀螺仪
-#include "imu_collision.h"   // 陀螺仪碰撞检测
+#include "gyro_collision.h"   // 陀螺仪碰撞检测
 #include "TOF_VL53L0X.h"
 #include "oled.h"
 #include "ax_ps2.h"

@@ -2,7 +2,7 @@
 /* ------------  头文件  ------------ */
 #include "stdint.h"
 #include "math.h"   // 只用 ABS 宏，可自己写
-#include "imu_collision.h"
+#include "gyro_collision.h"
 
 // 已有变量
 //int16_t acc[3];   // 原始加速度  g * 1000  (±16 g 量程)

@@ -1,6 +1,6 @@
 // 陀螺仪碰撞检测算法
-#ifndef IMU_COLLISION_H
-#define IMU_COLLISION_H
+#ifndef GYRO_COLLISION_H
+#define GYRO_COLLISION_H
 
 #include "stdint.h"
 #include "math.h"   // 只用 ABS 宏，可自己写
