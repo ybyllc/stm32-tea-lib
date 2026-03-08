@@ -24,10 +24,5 @@
 
 u8  VL53L0X_Init(void);
 u16 VL53L0X_ReadDistance(void);
-u8  VL53L0X_IsReady(void);
-u8  VL53L0X_ReadINT(void);
-u16 TOF_QuickTest(void);
-u8  TOF_DiagnosticTest(void);
-void TOF_ReadStatusInfo(void);
 
 #endif
