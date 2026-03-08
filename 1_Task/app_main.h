@@ -8,7 +8,6 @@ extern "C" {
 #include "tim.h"
 #include "usart.h"
 #include "gpio.h"
-#include "ps2.h"
 
 void Delay_us(u32 nus);
 #define delay_ms(n) HAL_Delay(n)
