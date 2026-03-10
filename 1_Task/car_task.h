@@ -9,7 +9,13 @@
 
 #include "common.h"
 
-// 函数声明
+/**
+ * @brief 小车任务模式
+ */
+typedef enum {
+    CAR_TASK_MODE_STRAIGHT = 0,   // 原直行任务
+    CAR_TASK_MODE_FIELD_SCAN      // 水田弓字遍历任务
+} CarTaskModeTypeDef;
 
 /**
  * @brief 小车任务初始化
@@ -54,5 +60,18 @@ void Car_Task_SetTargetAngle(float angle);
  * @retval 无
  */
 void Car_Task_SetMaxSpeed(int16_t speed);
+
+/**
+ * @brief 设置当前准备启动的小车任务模式
+ * @param mode 任务模式
+ * @retval 无
+ */
+void Car_Task_SetMode(CarTaskModeTypeDef mode);
+
+/**
+ * @brief 获取当前选中的小车任务模式
+ * @retval 任务模式
+ */
+CarTaskModeTypeDef Car_Task_GetMode(void);
 
 #endif /* __CAR_TASK_H */

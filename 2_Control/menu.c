@@ -4,6 +4,21 @@
  * @note 负责子菜单管理和菜单系统的整体逻辑
  */
 
+/*
+ * ==================== Menu方案风格约定（开发/AI参考）====================
+ * 1) 页面职责单一：一个页面函数只负责“读取状态 + 渲染显示”，不做重型业务逻辑。
+ * 2) 初始化懒加载：进入页面时再初始化模块（Menu_InitXXX），避免上电一次性初始化全部外设。
+ * 3) 统一离线降级：驱动未链接/外设离线时，页面必须显示可读提示，不崩溃、不死循环。
+ * 4) 输入/输出互斥：同一外设复用端口（如PPM/SBUS）时，页面内只启用一种模式并明确提示。
+ * 5) 显示风格统一：标题在第0行，状态在第1行，数据主体在中间，最后一行保留返回提示。
+ * 6) 摇杆可视化统一：通道值先归一化，再用DrawStickBar绘制，128为中位，左右对称填充。
+ * 7) 参数边界保护：所有通道值在显示前先限幅，防止异常值导致UI错位或数值溢出。
+ * 8) 可维护优先：公共逻辑提取为静态函数，禁止在多个页面复制粘贴同一段处理代码。
+ * 9) 修改原则：新增页面先补函数声明，再补初始化、渲染、按键处理、菜单入口四处映射。
+ * 10) 调试友好：错误信息尽量给出“检查方向”（引脚/波特率/中断/驱动是否加入工程）。
+ * ======================================================================
+ */
+
 #include "menu.h"
 #include "menu_input.h"
 #include "oled_ui_mode.h"
@@ -11,6 +26,8 @@
 #include "icm42670.h"
 #include "TOF_VL53L0X.h"
 #include "remote_key.h"
+#include "ppm_input.h"
+#include "sbus_input.h"
 #include "motor_tb6612.h"
 #include "motor_standard.h"
 #include "PWM_standard.h"
@@ -26,6 +43,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 
+
 // 陀螺仪类型枚举
 typedef enum {
     GYRO_TYPE_NONE,        // 无陀螺仪
@@ -37,13 +55,15 @@ typedef enum {
 uint8_t gyro_initialized = 0;    // 陀螺仪是否已初始化
 uint8_t tof_initialized = 0;     // TOF是否已初始化
 uint8_t remote_key_initialized = 0; // 遥控器是否已初始化
+uint8_t ppm_initialized = 0;      // PPM输入是否已初始化
+uint8_t sbus_initialized = 0;     // SBUS输入是否已初始化
 uint8_t motor_initialized = 0;   // 电机是否已初始化
 uint8_t adc_initialized = 0;     // ADC是否已初始化
 uint8_t ps2_initialized = 0;     // PS2手柄是否已初始化
 uint8_t gpio_initialized = 0;    // GPIO测试是否已初始化
 
 // ADC句柄
-ADC_HandleTypeDef hadc1;
+extern yADC_HandleTypeDef hadc1;
 
 // 电机测试状态
 int16_t motor_speeds[4] = {0, 0, 0, 0}; // 四个电机的速度值（-1000到1000）
@@ -70,7 +90,10 @@ extern u16 TOF_QuickTest(void);
 static void Menu_DisplayGyroPage(void);
 static void Menu_DisplayEc11TestPage(void);
 static void Menu_DisplayTofTestPage(void);
+static void Menu_DisplayFieldTaskPage(void);
 static void Menu_DisplayRemoteKeyTestPage(void);
+static void Menu_DisplayPPMInputTestPage(void);
+static void Menu_DisplaySBUSInputTestPage(void);
 static void Menu_DisplayMotorTestPage(void);
 static void Menu_DisplayEncoderTestPage(void);
 static void Menu_DisplayAdcTestPage(void);
@@ -79,6 +102,43 @@ static void Menu_DisplayPS2ControlPage(void);
 static void Menu_DisplayGPIOTestPage(void);
 static void Menu_DisplayMainMenu(void);
 static void Menu_DisplayCurrentPage(void);
+static u8 Menu_IsPPMDriverLinked(void);
+static u8 Menu_IsSBUSDriverLinked(void);
+static CarTaskModeTypeDef Menu_GetPendingTaskMode(void);
+
+/**
+ * @brief 判断PPM驱动是否已链接到当前工程
+ * @retval 1-已链接, 0-未链接
+ */
+static u8 Menu_IsPPMDriverLinked(void) {
+    return 1U;
+}
+
+/**
+ * @brief 判断SBUS输入驱动是否已链接到当前工程
+ * @retval 1-已链接, 0-未链接
+ */
+static u8 Menu_IsSBUSDriverLinked(void) {
+    return 1U;
+}
+
+/**
+ * @brief 根据当前菜单位置决定即将启动的任务模式
+ * @retval 小车任务模式
+ * @note 仅当主菜单光标停留在 Field Task 项时，PC6 启动水田遍历任务
+ */
+static CarTaskModeTypeDef Menu_GetPendingTaskMode(void) {
+    if ((menuState.currentPage == MENU_PAGE_MAIN) &&
+        (mainMenuItems[menuState.currentItem].page == MENU_PAGE_FIELD_TASK)) {
+        return CAR_TASK_MODE_FIELD_SCAN;
+    }
+
+    if (menuState.currentPage == MENU_PAGE_FIELD_TASK) {
+        return CAR_TASK_MODE_FIELD_SCAN;
+    }
+
+    return CAR_TASK_MODE_STRAIGHT;
+}
 
 /**
  * @brief 绘制摇杆进度条（带中心点）
@@ -235,9 +295,45 @@ uint8_t Menu_InitRemoteKey(void) {
     if (remote_key_initialized) {
         return 1;  // 已经初始化过
     }
-    
+
     RemoteKey_Init();
     remote_key_initialized = 1;
+    return 1;
+}
+
+/**
+ * @brief 初始化PPM输入（仅在第一次进入PPM页面时调用）
+ * @retval 0-失败, 1-成功
+ */
+uint8_t Menu_InitPPM(void) {
+    if (ppm_initialized) {
+        return 1;
+    }
+
+    if (Menu_IsPPMDriverLinked() == 0U) {
+        return 0;
+    }
+
+    PPM_In_Init();
+    ppm_initialized = 1;
+    return 1;
+}
+
+/**
+ * @brief 初始化SBUS输入（仅在第一次进入SBUS页面时调用）
+ * @retval 0-失败, 1-成功
+ */
+uint8_t Menu_InitSBUS(void) {
+    if (sbus_initialized) {
+        return 1;
+    }
+
+    if (Menu_IsSBUSDriverLinked() == 0U) {
+        return 0;
+    }
+
+    SBUS_In_Init();
+    sbus_initialized = 1;
     return 1;
 }
 
@@ -282,7 +378,10 @@ const MenuItem mainMenuItems[] = {
     {"Gyro Info", MENU_PAGE_GYRO},
     {"EC11 Test", MENU_PAGE_EC11_TEST},
     {"TOF Test", MENU_PAGE_TOF_TEST},
+    {"Field Task", MENU_PAGE_FIELD_TASK},
     {"Remote Key Test", MENU_PAGE_REMOTE_KEY_TEST},
+    {"PPM In Test", MENU_PAGE_PPM_INPUT_TEST},
+    {"SBUS In Test", MENU_PAGE_SBUS_INPUT_TEST},
     {"Motor Test", MENU_PAGE_MOTOR_TEST},
     {"Encoder Test", MENU_PAGE_ENCODER_TEST},
     {"ADC Test", MENU_PAGE_ADC_TEST},
@@ -323,6 +422,8 @@ void Menu_Init(void) {
  * @note 启动car_task，让陀螺仪z轴保持在30度来笔直前进
  */
 static void Menu_RunMainTask(void) {
+    CarTaskModeTypeDef task_mode = Menu_GetPendingTaskMode();
+
     OLED_Clear(0);
     
     // 在屏幕中间显示反色的 "Task Start"
@@ -331,6 +432,7 @@ static void Menu_RunMainTask(void) {
     OLED_Refresh();
     
     // 初始化car_task
+    Car_Task_SetMode(task_mode);
     Car_Task_Init();
     
     // 启动car_task
@@ -595,6 +697,23 @@ static void Menu_DisplayTofTestPage(void) {
 }
 
 /**
+ * @brief 显示水田遍历任务说明页面
+ * @note 用于在不改 PC6 按键语义的前提下，给用户一个明确的新任务选择入口
+ */
+static void Menu_DisplayFieldTaskPage(void) {
+    OLED_Clear(0);
+
+    OLED_ShowString(0, 0, "Field Task", 16);
+    OLED_ShowString(0, 2, "PC6:Start/Stop", 12);
+    OLED_ShowString(0, 3, "TOF:Obstacle", 12);
+    OLED_ShowString(0, 4, "Gyro:WIT PID", 12);
+    OLED_ShowString(0, 5, "Rear motor only", 12);
+    OLED_ShowString(0, 7, "Long press back", 12);
+
+    OLED_Refresh();
+}
+
+/**
  * @brief 显示遥控器测试页面
  */
 static void Menu_DisplayRemoteKeyTestPage(void) {
@@ -660,7 +779,121 @@ static void Menu_DisplayRemoteKeyTestPage(void) {
 
     OLED_Refresh();
 }
+/**
+ * @brief 显示PPM输入测试页面
+ */
+static void Menu_DisplayPPMInputTestPage(void) {
+    u16 channels[PPM_IN_MAX_CHANNELS] = {0};
+    u8 channel_count = 0;
+    u8 stick_value;
+    
+    OLED_Clear(0);
+    OLED_ShowString(0, 0, "PPM In Test", 16);
+    
+    if (!ppm_initialized) {
+        Menu_InitPPM();
+    }
+    
+    if (Menu_IsPPMDriverLinked() == 0U) {
+        OLED_ShowString(0, 1, "Drv:Not Linked", 12);
+        OLED_ShowString(0, 3, "Add ppm_input.c", 12);
+        OLED_ShowString(0, 4, "to Keil target", 12);
+        OLED_Refresh();
+        return;
+    }
+    
+    if (PPM_In_GetFrame(channels, &channel_count) && PPM_In_IsOnline()) {
+        // 显示状态
+        OLED_ShowString(0, 1, "State:Online", 12);
+        
+        // 绘制前4个通道的摇杆栏
+        // CH1
+        if (channel_count > 0) {
+            // 转换脉宽（1000-2000us）为摇杆值（0-255，128为中位）
+            stick_value = (u8)((channels[0] - 1000) * 255 / 1000);
+            OLED_ShowString(0, 2, "CH1:", 12);
+            DrawStickBar(32, 2, 96, stick_value);
+        }
+        
+        // CH2
+        if (channel_count > 1) {
+            stick_value = (u8)((channels[1] - 1000) * 255 / 1000);
+            OLED_ShowString(0, 3, "CH2:", 12);
+            DrawStickBar(32, 3, 96, stick_value);
+        }
+        
+        // CH3
+        if (channel_count > 2) {
+            stick_value = (u8)((channels[2] - 1000) * 255 / 1000);
+            OLED_ShowString(0, 4, "CH3:", 12);
+            DrawStickBar(32, 4, 96, stick_value);
+        }
+        
+        // CH4
+        if (channel_count > 3) {
+            stick_value = (u8)((channels[3] - 1000) * 255 / 1000);
+            OLED_ShowString(0, 5, "CH4:", 12);
+            DrawStickBar(32, 5, 96, stick_value);
+        }
+        
+        // 显示通道数
+        char str[24];
+        sprintf(str, "Count:%u", channel_count);
+        OLED_ShowString(0, 6, str, 12);
+    } else {
+        // 离线状态
+        OLED_ShowString(0, 1, "State:Offline", 12);
+        OLED_ShowString(0, 3, "Check PPM wire", 12);
+        OLED_ShowString(0, 4, "and EXTI cfg", 12);
+    }
+    
+    OLED_ShowString(0, 7, "Long press back", 12);
+    OLED_Refresh();
+}
 
+/**
+ * @brief 显示SBUS输入测试页面
+ */
+static void Menu_DisplaySBUSInputTestPage(void) {
+    SBUS_InFrameTypeDef frame;
+    char str[24];
+
+    OLED_Clear(0);
+    OLED_ShowString(0, 0, "SBUS In Test", 16);
+
+    if (!sbus_initialized) {
+        Menu_InitSBUS();
+    }
+
+    if (Menu_IsSBUSDriverLinked() == 0U) {
+        OLED_ShowString(0, 1, "Drv:Not Linked", 12);
+        OLED_ShowString(0, 3, "Add sbus_input.c", 12);
+        OLED_ShowString(0, 4, "to Keil target", 12);
+        OLED_Refresh();
+        return;
+    }
+
+    if (SBUS_In_GetFrame(&frame) && SBUS_In_IsOnline()) {
+        OLED_ShowString(0, 1, "State:Online", 12);
+
+        sprintf(str, "FS:%u Lost:%u", frame.failsafe, frame.frame_lost);
+        OLED_ShowString(0, 2, str, 12);
+
+        sprintf(str, "C1:%4u C2:%4u", frame.channels[0], frame.channels[1]);
+        OLED_ShowString(0, 3, str, 12);
+        sprintf(str, "C3:%4u C4:%4u", frame.channels[2], frame.channels[3]);
+        OLED_ShowString(0, 4, str, 12);
+
+        sprintf(str, "C17:%u C18:%u", frame.ch17, frame.ch18);
+        OLED_ShowString(0, 6, str, 12);
+    } else {
+        OLED_ShowString(0, 1, "State:Offline", 12);
+        OLED_ShowString(0, 3, "Check UART", 12);
+        OLED_ShowString(0, 4, "100k 8E2 INV", 12);
+    }
+
+    OLED_Refresh();
+}
 /**
  * @brief 显示电机测试页面
  */
@@ -788,6 +1021,7 @@ static void Menu_DisplayAdcTestPage(void) {
     // 显示标题
     OLED_ShowString(0, 0, "ADC Test", 16);
     
+#
     // 首次进入时初始化ADC
     if (!adc_initialized) {
         Menu_InitAdc();
@@ -1005,8 +1239,6 @@ static void Menu_DisplayPS2ControlPage(void) {
     
     OLED_Refresh();
 }
-
-
 /**
  * @brief 显示舵机控制界面
  * @note 舵机运动，按时间转一圈
@@ -1229,8 +1461,17 @@ static void Menu_DisplayCurrentPage(void) {
         case MENU_PAGE_TOF_TEST:
             Menu_DisplayTofTestPage();
             break;
+        case MENU_PAGE_FIELD_TASK:
+            Menu_DisplayFieldTaskPage();
+            break;
         case MENU_PAGE_REMOTE_KEY_TEST:
             Menu_DisplayRemoteKeyTestPage();
+            break;
+        case MENU_PAGE_PPM_INPUT_TEST:
+            Menu_DisplayPPMInputTestPage();
+            break;
+        case MENU_PAGE_SBUS_INPUT_TEST:
+            Menu_DisplaySBUSInputTestPage();
             break;
         case MENU_PAGE_MOTOR_TEST:
             Menu_DisplayMotorTestPage();
@@ -1258,3 +1499,5 @@ static void Menu_DisplayCurrentPage(void) {
             break;
     }
 }
+
+

@@ -15,7 +15,10 @@ typedef enum {
     MENU_PAGE_GYRO,      // 陀螺仪信息页面
     MENU_PAGE_EC11_TEST, // EC11测试页面
     MENU_PAGE_TOF_TEST,  // TOF测距测试页面
+    MENU_PAGE_FIELD_TASK, // 水田遍历任务说明页面
     MENU_PAGE_REMOTE_KEY_TEST, // 遥控器测试页面
+    MENU_PAGE_PPM_INPUT_TEST,  // PPM输入测试页面
+    MENU_PAGE_SBUS_INPUT_TEST, // SBUS输入测试页面
     MENU_PAGE_MOTOR_TEST, // 电机测试页面
     MENU_PAGE_ENCODER_TEST, // 编码器测试页面
     MENU_PAGE_ADC_TEST, // ADC测试页面
@@ -46,6 +49,8 @@ extern uint8_t MAIN_MENU_ITEM_COUNT;
 extern uint8_t gyro_initialized;
 extern uint8_t tof_initialized;
 extern uint8_t remote_key_initialized;
+extern uint8_t ppm_initialized;
+extern uint8_t sbus_initialized;
 extern uint8_t motor_initialized;
 extern uint8_t adc_initialized;
 extern uint8_t ps2_initialized;
@@ -92,6 +97,18 @@ uint8_t Menu_InitTof(void);
  * @retval 0-失败, 1-成功
  */
 uint8_t Menu_InitRemoteKey(void);
+
+/**
+ * @brief 初始化PPM输入（仅在第一次进入PPM页面时调用）
+ * @retval 0-失败, 1-成功
+ */
+uint8_t Menu_InitPPM(void);
+
+/**
+ * @brief 初始化SBUS输入（仅在第一次进入SBUS页面时调用）
+ * @retval 0-失败, 1-成功
+ */
+uint8_t Menu_InitSBUS(void);
 
 /**
  * @brief 初始化电机（仅在第一次进入Motor Test页面时调用）
