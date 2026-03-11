@@ -63,7 +63,7 @@ uint8_t ps2_initialized = 0;     // PS2手柄是否已初始化
 uint8_t gpio_initialized = 0;    // GPIO测试是否已初始化
 
 // ADC句柄
-extern yADC_HandleTypeDef hadc1;
+extern ADC_HandleTypeDef hadc1;
 
 // 电机测试状态
 int16_t motor_speeds[4] = {0, 0, 0, 0}; // 四个电机的速度值（-1000到1000）
@@ -1417,12 +1417,35 @@ static void Menu_DisplayMainMenu(void) {
     
     // 垂直行布局参数
     #define MAX_VISIBLE_ITEMS 4  // 16字大小对应4行
-    
-    // 计算滚动偏移量
-    uint8_t scroll_offset = 0;
-    if (menuState.currentItem >= MAX_VISIBLE_ITEMS) {
-        scroll_offset = menuState.currentItem - MAX_VISIBLE_ITEMS + 1;
+
+    // 使用记忆滚动窗口，避免上滑时光标长期停留在最底行
+    static uint8_t scroll_offset = 0;
+    static uint8_t last_item = 0xFF;
+
+    if (MAIN_MENU_ITEM_COUNT <= MAX_VISIBLE_ITEMS) {
+        scroll_offset = 0;
+    } else {
+        uint8_t max_scroll_offset = MAIN_MENU_ITEM_COUNT - MAX_VISIBLE_ITEMS;
+
+        if (last_item == 0xFF) {
+            if (menuState.currentItem > max_scroll_offset) {
+                scroll_offset = max_scroll_offset;
+            } else {
+                scroll_offset = menuState.currentItem;
+            }
+        }
+
+        if (menuState.currentItem < scroll_offset) {
+            scroll_offset = menuState.currentItem;
+        } else if (menuState.currentItem >= (uint8_t)(scroll_offset + MAX_VISIBLE_ITEMS)) {
+            scroll_offset = menuState.currentItem - MAX_VISIBLE_ITEMS + 1;
+        }
+
+        if (scroll_offset > max_scroll_offset) {
+            scroll_offset = max_scroll_offset;
+        }
     }
+    last_item = menuState.currentItem;
     
     // 垂直行布局，每个菜单项占一行，16字大小
     for (uint8_t i = 0; i < MAIN_MENU_ITEM_COUNT; i++) {
