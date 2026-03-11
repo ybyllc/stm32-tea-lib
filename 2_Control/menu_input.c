@@ -159,9 +159,8 @@ void MenuInput_HandleKeyEvent(uint8_t event) {
             AX_PS2_DebugScan();
         }
     } else if (event == 2) {  // 长按
-        // 长按返回主菜单
+        // 长按返回主菜单，保留一级菜单光标记忆
         menuState.currentPage = MENU_PAGE_MAIN;
-        menuState.currentItem = 0;
     }
 }
 
