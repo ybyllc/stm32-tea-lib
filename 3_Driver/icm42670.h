@@ -5,10 +5,8 @@
 #include "common.h"
 #include "soft_iic.h"
 
-// ICM-42670 I2C 设备地址（7位地址，不包含R/W位）
-// SA0 接地时为 0x68，接高时为 0x69
-// 当前PC8(SA0)默认为高电平
-#define ICM42670_I2C_ADDR                 0x69
+// 默认 I2C 地址（会在初始化时自动扫描常见地址并覆盖）
+#define ICM42670_I2C_ADDR                 0x6B
 
 // ICM-42670 引脚定义
 #define ICM42670_SCL_PORT                 GPIOA
@@ -41,6 +39,32 @@
 #define ICM42670_ACCEL_DATA_Z1            0x2D    // 加速度计 Z 轴数据高字节
 #define ICM42670_ACCEL_DATA_Z0            0x2E    // 加速度计 Z 轴数据低字节
 #define ICM42670_PWR_MGMT_0               0x4E    // 电源管理 0
+
+// LSM6 系列常用寄存器地址（用于兼容“类似陀螺仪”）
+#define LSM6_CTRL1_XL                     0x10
+#define LSM6_CTRL2_G                      0x11
+#define LSM6_CTRL3_C                      0x12
+#define LSM6_TEMP_OUT_L                   0x20
+#define LSM6_OUTX_L_G                     0x22
+#define LSM6_OUTX_L_A                     0x28
+
+// 常见 WHO_AM_I 值
+#define IMU_WHO_AM_I_ICM42670             0x67
+#define IMU_WHO_AM_I_ICM42670_ALT         0x41
+#define IMU_WHO_AM_I_ICM42605             0x42
+#define IMU_WHO_AM_I_ICM42688             0x47
+#define IMU_WHO_AM_I_LSM6DS3              0x69
+#define IMU_WHO_AM_I_LSM6DSL              0x6A
+#define IMU_WHO_AM_I_LSM6DSR              0x6B
+#define IMU_WHO_AM_I_LSM6DSO              0x6C
+
+typedef enum
+{
+    IMU_DEVICE_NONE = 0,
+    IMU_DEVICE_ICM426XX,
+    IMU_DEVICE_LSM6,
+    IMU_DEVICE_LSM6_COMPAT
+} IMU_DeviceType;
 
 // 陀螺仪满量程选项
 #define ICM42670_GYRO_FS_2000DPS          0x00    // ±2000 dps
@@ -84,6 +108,12 @@ void ICM42670_Get_Accel(void);
 void ICM42670_Get_Temp(void);
 void ICM42670_Get_All(void);
 void ICM42670_Data_Unit_Convert(void);
+
+// 自动识别信息查询
+IMU_DeviceType ICM42670_GetDeviceType(void);
+const char* ICM42670_GetDeviceName(void);
+uint8_t ICM42670_GetWhoAmI(void);
+uint8_t ICM42670_GetI2CAddr(void);
 
 // 兼容原来的陀螺仪接口
 extern float fAcc[3], fGyro[3], fAngle[3], fYaw;
