@@ -117,3 +117,149 @@ void CDK_Callback(void)
     // CAN_Tx(COLLISION_ID, 1);
     HAL_GPIO_TogglePin(GPIOC, GPIO_PIN_7);
 }
+
+/* ------------  姿态滤波（控制层算法）  ------------ */
+#define GYRO_FILTER_GYRO_ALPHA          0.10f
+#define GYRO_FILTER_ACC_ALPHA           0.10f
+#define GYRO_FILTER_COMP_ALPHA          0.98f
+#define GYRO_FILTER_BIAS_LERP_STATIC    0.002f
+#define GYRO_FILTER_STILL_GYRO_THR      2.0f
+#define GYRO_FILTER_STILL_ACC_THR       0.12f
+
+typedef struct
+{
+    uint8_t inited;
+    uint8_t ready;
+    uint32_t last_ms;
+    float gyro_bias[3];
+    float gyro_lpf[3];
+    float acc_lpf[3];
+    float angle[3];
+} GyroFilterState;
+
+static GyroFilterState s_gyro_filter = {0};
+
+static float Gyro_Filter_Wrap180(float deg)
+{
+    while (deg > 180.0f) {
+        deg -= 360.0f;
+    }
+    while (deg < -180.0f) {
+        deg += 360.0f;
+    }
+    return deg;
+}
+
+void Gyro_Filter_Reset(void)
+{
+    uint8_t i;
+
+    s_gyro_filter.inited = 0;
+    s_gyro_filter.ready = 0;
+    s_gyro_filter.last_ms = 0;
+    for (i = 0; i < 3; i++) {
+        s_gyro_filter.gyro_bias[i] = 0.0f;
+        s_gyro_filter.gyro_lpf[i] = 0.0f;
+        s_gyro_filter.acc_lpf[i] = 0.0f;
+        s_gyro_filter.angle[i] = 0.0f;
+    }
+}
+
+uint8_t Gyro_Filter_IsReady(void)
+{
+    return s_gyro_filter.ready;
+}
+
+void Gyro_Filter_Update(float *acc_g, float *gyro_dps, float *angle_deg, float *yaw_deg)
+{
+    uint32_t now_ms;
+    float dt_s;
+    float ax, ay, az;
+    float gx, gy, gz;
+    float acc_norm;
+    float gyro_abs_sum;
+    float acc_roll_deg;
+    float acc_pitch_deg;
+    uint8_t i;
+
+    if (acc_g == 0 || gyro_dps == 0 || angle_deg == 0 || yaw_deg == 0) {
+        return;
+    }
+
+    now_ms = HAL_GetTick();
+    if (!s_gyro_filter.inited) {
+        s_gyro_filter.inited = 1;
+        s_gyro_filter.ready = 1;
+        s_gyro_filter.last_ms = now_ms;
+        for (i = 0; i < 3; i++) {
+            s_gyro_filter.gyro_lpf[i] = gyro_dps[i];
+            s_gyro_filter.acc_lpf[i] = acc_g[i];
+            s_gyro_filter.angle[i] = angle_deg[i];
+        }
+        return;
+    }
+
+    dt_s = (float)(now_ms - s_gyro_filter.last_ms) / 1000.0f;
+    s_gyro_filter.last_ms = now_ms;
+    if (dt_s <= 0.0f || dt_s > 0.2f) {
+        dt_s = 0.01f;
+    }
+
+    ax = acc_g[0];
+    ay = acc_g[1];
+    az = acc_g[2];
+    gx = gyro_dps[0];
+    gy = gyro_dps[1];
+    gz = gyro_dps[2];
+
+    acc_norm = sqrtf(ax * ax + ay * ay + az * az);
+    gyro_abs_sum = fabsf(gx) + fabsf(gy) + fabsf(gz);
+
+    // 静止时慢速更新零偏，降低积分漂移
+    if ((fabsf(acc_norm - 1.0f) < GYRO_FILTER_STILL_ACC_THR) &&
+        (gyro_abs_sum < GYRO_FILTER_STILL_GYRO_THR)) {
+        s_gyro_filter.gyro_bias[0] += GYRO_FILTER_BIAS_LERP_STATIC * (gx - s_gyro_filter.gyro_bias[0]);
+        s_gyro_filter.gyro_bias[1] += GYRO_FILTER_BIAS_LERP_STATIC * (gy - s_gyro_filter.gyro_bias[1]);
+        s_gyro_filter.gyro_bias[2] += GYRO_FILTER_BIAS_LERP_STATIC * (gz - s_gyro_filter.gyro_bias[2]);
+    }
+
+    gx -= s_gyro_filter.gyro_bias[0];
+    gy -= s_gyro_filter.gyro_bias[1];
+    gz -= s_gyro_filter.gyro_bias[2];
+
+    s_gyro_filter.gyro_lpf[0] += GYRO_FILTER_GYRO_ALPHA * (gx - s_gyro_filter.gyro_lpf[0]);
+    s_gyro_filter.gyro_lpf[1] += GYRO_FILTER_GYRO_ALPHA * (gy - s_gyro_filter.gyro_lpf[1]);
+    s_gyro_filter.gyro_lpf[2] += GYRO_FILTER_GYRO_ALPHA * (gz - s_gyro_filter.gyro_lpf[2]);
+
+    s_gyro_filter.acc_lpf[0] += GYRO_FILTER_ACC_ALPHA * (ax - s_gyro_filter.acc_lpf[0]);
+    s_gyro_filter.acc_lpf[1] += GYRO_FILTER_ACC_ALPHA * (ay - s_gyro_filter.acc_lpf[1]);
+    s_gyro_filter.acc_lpf[2] += GYRO_FILTER_ACC_ALPHA * (az - s_gyro_filter.acc_lpf[2]);
+
+    acc_roll_deg = atan2f(s_gyro_filter.acc_lpf[1], s_gyro_filter.acc_lpf[2]) * 57.2957795f;
+    acc_pitch_deg = atan2f(-s_gyro_filter.acc_lpf[0],
+                           sqrtf(s_gyro_filter.acc_lpf[1] * s_gyro_filter.acc_lpf[1] +
+                                 s_gyro_filter.acc_lpf[2] * s_gyro_filter.acc_lpf[2])) * 57.2957795f;
+
+    s_gyro_filter.angle[0] = GYRO_FILTER_COMP_ALPHA * (s_gyro_filter.angle[0] + s_gyro_filter.gyro_lpf[0] * dt_s) +
+                             (1.0f - GYRO_FILTER_COMP_ALPHA) * acc_roll_deg;
+    s_gyro_filter.angle[1] = GYRO_FILTER_COMP_ALPHA * (s_gyro_filter.angle[1] + s_gyro_filter.gyro_lpf[1] * dt_s) +
+                             (1.0f - GYRO_FILTER_COMP_ALPHA) * acc_pitch_deg;
+    s_gyro_filter.angle[2] += s_gyro_filter.gyro_lpf[2] * dt_s;
+
+    s_gyro_filter.angle[0] = Gyro_Filter_Wrap180(s_gyro_filter.angle[0]);
+    s_gyro_filter.angle[1] = Gyro_Filter_Wrap180(s_gyro_filter.angle[1]);
+    s_gyro_filter.angle[2] = Gyro_Filter_Wrap180(s_gyro_filter.angle[2]);
+
+    gyro_dps[0] = s_gyro_filter.gyro_lpf[0];
+    gyro_dps[1] = s_gyro_filter.gyro_lpf[1];
+    gyro_dps[2] = s_gyro_filter.gyro_lpf[2];
+
+    acc_g[0] = s_gyro_filter.acc_lpf[0];
+    acc_g[1] = s_gyro_filter.acc_lpf[1];
+    acc_g[2] = s_gyro_filter.acc_lpf[2];
+
+    angle_deg[0] = s_gyro_filter.angle[0];
+    angle_deg[1] = s_gyro_filter.angle[1];
+    angle_deg[2] = s_gyro_filter.angle[2];
+    *yaw_deg = s_gyro_filter.angle[2];
+}
