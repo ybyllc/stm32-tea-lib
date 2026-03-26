@@ -1,10 +1,10 @@
 /**
- * @file menu_input.c
+ * @file menu_button.c
  * @brief 菜单输入处理实现
  * @note 负责菜单系统的输入逻辑，包括编码器、按键和遥控器输入
  */
 
-#include "menu_input.h"
+#include "menu_button.h"
 #include "menu.h"
 #include "encoder_knob.h"
 #include "remote_key.h"

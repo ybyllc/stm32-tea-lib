@@ -1,11 +1,11 @@
 /**
- * @file menu_input.h
+ * @file menu_button.h
  * @brief 菜单输入处理接口
  * @note 负责菜单系统的输入逻辑，包括编码器、按键和遥控器输入
  */
 
-#ifndef MENU_INPUT_H
-#define MENU_INPUT_H
+#ifndef MENU_BUTTON_H
+#define MENU_BUTTON_H
 
 #include "menu.h"
 
@@ -54,4 +54,4 @@ uint8_t MenuInput_GetEncoderKeyState(void);
  */
 uint8_t MenuInput_GetEncoderKeyEvent(void);
 
-#endif /* MENU_INPUT_H */
+#endif /* MENU_BUTTON_H */

@@ -20,7 +20,7 @@
  */
 
 #include "menu.h"
-#include "menu_input.h"
+#include "menu_button.h"
 #include "oled_ui_mode.h"
 #include "wit_gyro_sdk.h"
 #include "icm42670.h"
