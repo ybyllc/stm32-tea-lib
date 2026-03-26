@@ -27,7 +27,7 @@ int32_t Encoder_GetCount(uint8_t encoder_num)
             __HAL_TIM_SET_COUNTER(ENCODER1_TIM, 0);// 清零计数器
             break;
         case ENCODER_2:
-            count = (int32_t)__HAL_TIM_GET_COUNTER(ENCODER2_TIM);
+            count = -(int32_t)__HAL_TIM_GET_COUNTER(ENCODER2_TIM);
             __HAL_TIM_SET_COUNTER(ENCODER2_TIM, 0);// 清零计数器
             break;
         default:
