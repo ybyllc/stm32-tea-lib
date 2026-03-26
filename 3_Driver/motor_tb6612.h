@@ -67,14 +67,15 @@ extern "C" {
 #define BACK_D_PWM2_PORT     GPIOB
 
 // TB6612引脚
-#define BACK_C_IN1_PIN       GPIO_PIN_5
+#define BACK_C_IN1_PIN       GPIO_PIN_7
 #define BACK_C_IN1_PORT      GPIOA
-#define BACK_C_IN2_PIN       GPIO_PIN_7
+#define BACK_C_IN2_PIN       GPIO_PIN_5
 #define BACK_C_IN2_PORT      GPIOA
 #define BACK_D_IN1_PIN       GPIO_PIN_4
 #define BACK_D_IN1_PORT      GPIOA
 #define BACK_D_IN2_PIN       GPIO_PIN_0
 #define BACK_D_IN2_PORT      GPIOB
+
 
 /* 电机方向定义 */
 #define MOTOR_DIR_FORWARD    1
