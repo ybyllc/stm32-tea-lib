@@ -8,6 +8,7 @@
 #define KEY_PC6_H
 
 #include <stdint.h>
+#include "common.h"
 
 /**
  * @brief PC6按键初始化

@@ -5,7 +5,6 @@
  */
 
 #include "key_pc6.h"
-#include "stm32f4xx_hal.h"
 
 /**
  * @brief PC6按键初始化
