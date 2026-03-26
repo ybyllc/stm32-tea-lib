@@ -293,7 +293,7 @@ void App_Loop2(void)
 		OLED_ShowString(0,0,"EC11 Test:",16);
 		
 		// 显示计数值
-		sprintf(str,"Cnt:%4ld", current_count);
+		sprintf(str,"Cnt:%4d", current_count);
 		OLED_ShowString(0,2,str,16);
 		
 		// 按键短按清零
