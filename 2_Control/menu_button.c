@@ -135,6 +135,21 @@ void MenuInput_HandleEncoder(int32_t count) {
         }
         
         last_count = count;
+    } else if (menuState.currentPage == MENU_PAGE_SPEED_STRAIGHT_TASK) {
+        static int32_t last_count = 0;
+        static uint32_t last_rotation_time = 0;
+
+        #define SPEED_PID_ROTATION_DELAY_MS 80
+
+        int32_t delta = count - last_count;
+        uint32_t current_time = HAL_GetTick();
+
+        if (delta != 0 && (current_time - last_rotation_time) >= SPEED_PID_ROTATION_DELAY_MS) {
+            Menu_SpeedPid_HandleEncoderDelta(delta);
+            last_rotation_time = current_time;
+        }
+
+        last_count = count;
     }
 }
 
@@ -153,6 +168,12 @@ void MenuInput_HandleKeyEvent(uint8_t event) {
         } else if (menuState.currentPage == MENU_PAGE_MOTOR_TEST) {
             // 在电机测试页面，短按切换速度调整模式
             motor_speed_adjust_mode = !motor_speed_adjust_mode;
+        } else if (menuState.currentPage == MENU_PAGE_SPEED_STRAIGHT_TASK) {
+            // 在PID调试页面，短按切换“选择/编辑”或切换输出使能
+            Menu_SpeedPid_HandleShortPress();
+        } else if (menuState.currentPage == MENU_PAGE_CAM_INFO) {
+            // 在摄像头调试页面，短按开始/停止追踪
+            Menu_CamTrack_HandleShortPress();
         } else if (menuState.currentPage == MENU_PAGE_PS2_TEST) {
             // 在PS2测试页面，短按触发详细调试
             extern void AX_PS2_DebugScan(void);
@@ -201,3 +222,4 @@ uint8_t MenuInput_GetEncoderKeyState(void) {
 uint8_t MenuInput_GetEncoderKeyEvent(void) {
     return Ec11_knob_Key_GetEvent();
 }
+

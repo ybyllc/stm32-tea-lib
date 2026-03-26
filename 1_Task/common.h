@@ -1,6 +1,7 @@
 #ifndef _COMMON_H	//
 #define _COMMON_H  //避免重复编译，只是自己的取名，只能包含字母和下划线
 #include "stm32f4xx_hal.h"
+#include <stdio.h>
 #include "main.h"
 
 static u32 fac_us=0;							//us延时倍乘数
@@ -34,5 +35,9 @@ extern u8  USART5_RX_BUF[BUFFER_SIZE];
 typedef uint32_t  u32;
 typedef uint16_t u16;
 typedef uint8_t  u8;
+
+typedef signed int  s32;
+typedef signed short s16;
+typedef signed char  s8;
 
 #endif

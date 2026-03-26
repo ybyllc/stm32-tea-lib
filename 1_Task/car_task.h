@@ -14,7 +14,8 @@
  */
 typedef enum {
     CAR_TASK_MODE_STRAIGHT = 0,   // 原直行任务
-    CAR_TASK_MODE_FIELD_SCAN      // 水田弓字遍历任务
+    CAR_TASK_MODE_FIELD_SCAN,     // 水田弓字遍历任务
+    CAR_TASK_MODE_REMOTE          // PS2 远程控制验证任务
 } CarTaskModeTypeDef;
 
 /**

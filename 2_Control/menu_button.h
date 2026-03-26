@@ -55,3 +55,4 @@ uint8_t MenuInput_GetEncoderKeyState(void);
 uint8_t MenuInput_GetEncoderKeyEvent(void);
 
 #endif /* MENU_BUTTON_H */
+
