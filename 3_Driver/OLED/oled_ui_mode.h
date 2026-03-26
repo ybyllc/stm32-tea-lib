@@ -12,7 +12,7 @@
 #define OLED_UI_MODE_LVGL        2
 
 #ifndef OLED_UI_MODE
-#define OLED_UI_MODE OLED_UI_MODE_U8G2
+#define OLED_UI_MODE OLED_UI_MODE_TRADITIONAL//OLED_UI_MODE_U8G2
 #endif
 
 #endif /* OLED_UI_MODE_H */
