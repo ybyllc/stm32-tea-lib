@@ -11,6 +11,10 @@ static soft_iic_t tof_iic;
 // 调试日志开关，任务模式下默认关闭高频日志
 #define TOF_DEBUG_LOG     0
 #define TOF_BOOT_WAIT_MS  20U
+#define TOF_RANGING_KICK_DELAY_MS  1U
+#define TOF_RANGING_PREP_DELAY_MS  1U
+#define TOF_RANGING_POLL_DELAY_MS  2U
+#define TOF_RANGING_POLL_LIMIT     20U
 
 #if TOF_DEBUG_LOG
 #define TOF_LOG(...)      printf(__VA_ARGS__)
@@ -309,21 +313,21 @@ u8 VL53L0X_Init(void)
 u16 VL53L0X_ReadDistance(void)
 {
     u16 dist;
-    u16 timeout = 1000U;
+    u16 timeout = TOF_RANGING_POLL_LIMIT;
     u8 status;
 
     VL_WriteByte(REG_SYSRANGE_START, 0x01);
-    delay_ms(10);
+    delay_ms(TOF_RANGING_KICK_DELAY_MS);
     VL_WriteByte(REG_SYSRANGE_START, 0x00);
-    delay_ms(10);
+    delay_ms(TOF_RANGING_KICK_DELAY_MS);
 
     VL_WriteByte(0x0B, 0x01);
-    delay_ms(5);
+    delay_ms(TOF_RANGING_PREP_DELAY_MS);
 
     VL_WriteByte(REG_SYSRANGE_START, 0x01);
 
     do {
-        delay_ms(10);
+        delay_ms(TOF_RANGING_POLL_DELAY_MS);
         status = VL_ReadByte(REG_RESULT_INTERRUPT_STATUS);
         if ((status & 0x07) != 0U) {
             break;
