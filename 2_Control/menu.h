@@ -13,9 +13,14 @@
 typedef enum {
     MENU_PAGE_MAIN,      // 主菜单
     MENU_PAGE_GYRO,      // 陀螺仪信息页面
+    MENU_PAGE_CAM_INFO,  // 摄像头信息页面
     MENU_PAGE_EC11_TEST, // EC11测试页面
     MENU_PAGE_TOF_TEST,  // TOF测距测试页面
+    MENU_PAGE_SR04_TEST, // 超声波SR04测试页面
     MENU_PAGE_FIELD_TASK, // 水田遍历任务说明页面
+    MENU_PAGE_REMOTE_TASK, // PS2远程控制任务说明页面
+    MENU_PAGE_SPEED_STRAIGHT_TASK, // 编码器速度环直线测试
+    MENU_PAGE_GYRO_CIRCLE_TASK, // 陀螺仪角度环画圆测试
     MENU_PAGE_REMOTE_KEY_TEST, // 遥控器测试页面
     MENU_PAGE_PPM_INPUT_TEST,  // PPM输入测试页面
     MENU_PAGE_SBUS_INPUT_TEST, // SBUS输入测试页面
@@ -42,12 +47,60 @@ typedef struct {
     uint8_t isInMenu;          // 是否在菜单模式
 } MenuState;
 
+// 调试串口状态快照（供 debug_uart 使用）
+typedef struct {
+    uint32_t tick_ms;
+    uint8_t system_mode;
+    uint8_t page;
+    uint8_t gyro_ready;
+    uint8_t cam_online;
+
+    float yaw_deg;
+    float gyro_x_dps;
+    float gyro_y_dps;
+    float gyro_z_dps;
+    float acc_x_g;
+    float acc_y_g;
+    float acc_z_g;
+
+    int16_t motor_fl;
+    int16_t motor_fr;
+    int16_t motor_bl;
+    int16_t motor_br;
+
+    float speed_target_cps;
+    float speed_meas_left_cps;
+    float speed_meas_right_cps;
+    int16_t speed_pwm_left;
+    int16_t speed_pwm_right;
+    float speed_kp;
+    float speed_ki;
+    float speed_kd;
+    uint8_t speed_output_enable;
+
+    float circle_target_heading;
+    float circle_filtered_heading;
+    float circle_error;
+    int16_t circle_pwm_left;
+    int16_t circle_pwm_right;
+    float circle_kp;
+    float circle_ki;
+    float circle_kd;
+} MenuDebugState_t;
+
+#define MENU_DEBUG_PID_MASK_KP      (1U << 0)
+#define MENU_DEBUG_PID_MASK_KI      (1U << 1)
+#define MENU_DEBUG_PID_MASK_KD      (1U << 2)
+#define MENU_DEBUG_PID_MASK_TARGET  (1U << 3)
+#define MENU_DEBUG_PID_MASK_ENABLE  (1U << 4)
+
 // 外部变量声明
 extern MenuState menuState;
 extern const MenuItem mainMenuItems[];
 extern uint8_t MAIN_MENU_ITEM_COUNT;
 extern uint8_t gyro_initialized;
 extern uint8_t tof_initialized;
+extern uint8_t sr04_initialized;
 extern uint8_t remote_key_initialized;
 extern uint8_t ppm_initialized;
 extern uint8_t sbus_initialized;
@@ -136,6 +189,22 @@ uint8_t Menu_InitPS2(void);
 void Menu_Gryo_Update(void);
 
 /**
+ * @brief PID调试页面处理编码器增量
+ * @param delta 编码器增量（正/负）
+ */
+void Menu_SpeedPid_HandleEncoderDelta(int32_t delta);
+
+/**
+ * @brief PID调试页面处理短按事件
+ */
+void Menu_SpeedPid_HandleShortPress(void);
+
+/**
+ * @brief Cam Info 页面处理短按事件（开始/停止追踪）
+ */
+void Menu_CamTrack_HandleShortPress(void);
+
+/**
  * @brief 添加新的子菜单
  * @param name 菜单项名称
  * @param page 菜单项对应的页面
@@ -156,5 +225,34 @@ uint8_t Menu_GetMainItemCount(void);
  * @return 菜单项指针
  */
 const MenuItem* Menu_GetMainItem(uint8_t index);
+
+/**
+ * @brief 获取调试快照（无阻塞）
+ * @param out 输出快照指针
+ */
+void Menu_Debug_GetState(MenuDebugState_t *out);
+
+/**
+ * @brief 设置速度环PID参数（按mask更新）
+ * @param kp 比例参数
+ * @param ki 积分参数
+ * @param kd 微分参数
+ * @param target_cps 目标速度（count/s）
+ * @param output_enable 输出使能（0/1）
+ * @param mask MENU_DEBUG_PID_MASK_*
+ * @retval 1-成功 0-失败
+ */
+uint8_t Menu_Debug_SetSpeedPid(float kp, float ki, float kd, float target_cps,
+                               uint8_t output_enable, uint8_t mask);
+
+/**
+ * @brief 设置画圆角度环PID参数（按mask更新）
+ * @param kp 比例参数
+ * @param ki 积分参数
+ * @param kd 微分参数
+ * @param mask MENU_DEBUG_PID_MASK_*
+ * @retval 1-成功 0-失败
+ */
+uint8_t Menu_Debug_SetCirclePid(float kp, float ki, float kd, uint8_t mask);
 
 #endif /* MENU_H */

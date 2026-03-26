@@ -25,9 +25,11 @@
 #include "wit_gyro_sdk.h"
 #include "icm42670.h"
 #include "TOF_VL53L0X.h"
+#include "ultrasonic_sr04.h"
 #include "remote_key.h"
 #include "ppm_input.h"
 #include "sbus_input.h"
+#include "Cam_uart.h"
 #include "motor_tb6612.h"
 #include "motor_standard.h"
 #include "PWM_standard.h"
@@ -35,13 +37,71 @@
 #include "key_pc6.h"
 #include "encoder.h"
 #include "car_task.h"
+#include "gyro_collision.h"
+#include "PID.h"
+#include "debug_uart.h"
 #include "oled.h"
 #include "ax_ps2.h"
-#include "stm32f4xx_hal.h"
-#include "stm32f4xx_hal_adc.h"
-#include "stm32f4xx_hal_gpio.h"
+// #include "stm32f4xx_hal.h"
+// #include "stm32f4xx_hal_adc.h"
+// #include "stm32f4xx_hal_gpio.h"
 #include <stdio.h>
 #include <stdlib.h>
+
+/* ===== 菜单闭环测试任务参数 ===== */
+#define MENU_SPEED_TEST_PERIOD_MS            20U
+#define MENU_SPEED_TEST_TARGET_CPS_DEFAULT   520.0f
+#define MENU_SPEED_PID_KP_DEFAULT            0.16f
+#define MENU_SPEED_PID_KI_DEFAULT            0.02f
+#define MENU_SPEED_PID_KD_DEFAULT            0.00f
+#define MENU_SPEED_PID_OUT_MAX               700.0f
+#define MENU_SPEED_PID_OUT_MIN               (-700.0f)
+#define MENU_SPEED_ENCODER_LEFT_SIGN         1.0f
+#define MENU_SPEED_ENCODER_RIGHT_SIGN        1.0f
+#define MENU_SPEED_TARGET_CPS_MIN            (-1200.0f)
+#define MENU_SPEED_TARGET_CPS_MAX            (1200.0f)
+#define MENU_SPEED_PID_KP_MIN                0.0f
+#define MENU_SPEED_PID_KP_MAX                3.0f
+#define MENU_SPEED_PID_KI_MIN                0.0f
+#define MENU_SPEED_PID_KI_MAX                0.8f
+#define MENU_SPEED_PID_KD_MIN                0.0f
+#define MENU_SPEED_PID_KD_MAX                1.5f
+#define MENU_SPEED_TARGET_CPS_STEP           20.0f
+#define MENU_SPEED_PID_KP_STEP               0.01f
+#define MENU_SPEED_PID_KI_STEP               0.002f
+#define MENU_SPEED_PID_KD_STEP               0.01f
+
+#define MENU_CIRCLE_CTRL_PERIOD_MS           20U
+#define MENU_CIRCLE_TARGET_RADIUS_CM         20.0f
+#define MENU_CIRCLE_BASE_PWM                 220
+#define MENU_CIRCLE_TARGET_RATE_DPS          20.0f
+#define MENU_CIRCLE_PID_KP                   2.8f
+#define MENU_CIRCLE_PID_KI                   0.03f
+#define MENU_CIRCLE_PID_KD                   0.08f
+#define MENU_CIRCLE_PID_OUT_MAX              120.0f
+#define MENU_CIRCLE_PID_OUT_MIN              (-120.0f)
+#define MENU_CIRCLE_PID_KP_MIN               0.0f
+#define MENU_CIRCLE_PID_KP_MAX               20.0f
+#define MENU_CIRCLE_PID_KI_MIN               0.0f
+#define MENU_CIRCLE_PID_KI_MAX               5.0f
+#define MENU_CIRCLE_PID_KD_MIN               0.0f
+#define MENU_CIRCLE_PID_KD_MAX               5.0f
+#define MENU_CIRCLE_HEADING_LPF_ALPHA        0.25f
+
+//相机追踪 运动参数
+#define MENU_CAM_TRACK_CENTER_X              (-100)
+#define MENU_CAM_TRACK_X_DEADBAND            10
+#define MENU_CAM_TRACK_BASE_PWM              320
+#define MENU_CAM_TRACK_STEER_KP              0.1f
+#define MENU_CAM_TRACK_STEER_KI              0.0f
+#define MENU_CAM_TRACK_STEER_KD              0.0f
+#define MENU_CAM_TRACK_STEER_OUT_MAX         30.0f
+#define MENU_CAM_TRACK_STEER_OUT_MIN         (-30.0f)
+#define MENU_CAM_TRACK_TARGET_STEP_MAX_DEG   2.0f
+#define MENU_CAM_TRACK_X_MAX_DEG             45.0f
+#define MENU_CAM_TRACK_HEADING_KP            2.8f
+#define MENU_CAM_TRACK_HEADING_OUT_MAX       200.0f
+#define MENU_CAM_TRACK_HEADING_OUT_MIN       (-200.0f)
 
 
 // 陀螺仪类型枚举
@@ -51,9 +111,19 @@ typedef enum {
     GYRO_TYPE_ICM42670     // ICM42670 陀螺仪
 } GyroType;
 
+typedef enum {
+    MENU_SPEED_PID_ITEM_TARGET = 0,
+    MENU_SPEED_PID_ITEM_KP,
+    MENU_SPEED_PID_ITEM_KI,
+    MENU_SPEED_PID_ITEM_KD,
+    MENU_SPEED_PID_ITEM_RUN,
+    MENU_SPEED_PID_ITEM_COUNT
+} MenuSpeedPidItemType;
+
 // 模块初始化状态标志
 uint8_t gyro_initialized = 0;    // 陀螺仪是否已初始化
 uint8_t tof_initialized = 0;     // TOF是否已初始化
+uint8_t sr04_initialized = 0;    // SR04是否已初始化
 uint8_t remote_key_initialized = 0; // 遥控器是否已初始化
 uint8_t ppm_initialized = 0;      // PPM输入是否已初始化
 uint8_t sbus_initialized = 0;     // SBUS输入是否已初始化
@@ -61,6 +131,7 @@ uint8_t motor_initialized = 0;   // 电机是否已初始化
 uint8_t adc_initialized = 0;     // ADC是否已初始化
 uint8_t ps2_initialized = 0;     // PS2手柄是否已初始化
 uint8_t gpio_initialized = 0;    // GPIO测试是否已初始化
+static uint8_t cam_initialized = 0U; // 摄像头调试页面是否已初始化
 
 // ADC句柄
 extern ADC_HandleTypeDef hadc1;
@@ -80,6 +151,51 @@ int32_t encoder2_total_count = 0; // 编码器2的累计值
 
 // 当前使用的陀螺仪类型
 static GyroType current_gyro_type = GYRO_TYPE_NONE;
+static MenuPageType menu_last_page = MENU_PAGE_MAIN;
+
+// 速度环直线测试状态
+static uint8_t speed_straight_task_active = 0U;
+static uint32_t speed_straight_last_tick = 0U;
+static int32_t speed_straight_last_enc_left = 0;
+static int32_t speed_straight_last_enc_right = 0;
+static float speed_straight_meas_left = 0.0f;
+static float speed_straight_meas_right = 0.0f;
+static int16_t speed_straight_pwm_left = 0;
+static int16_t speed_straight_pwm_right = 0;
+static PID_t speed_straight_left_pid;
+static PID_t speed_straight_right_pid;
+static float speed_straight_target_cps = MENU_SPEED_TEST_TARGET_CPS_DEFAULT;
+static float speed_straight_pid_kp = MENU_SPEED_PID_KP_DEFAULT;
+static float speed_straight_pid_ki = MENU_SPEED_PID_KI_DEFAULT;
+static float speed_straight_pid_kd = MENU_SPEED_PID_KD_DEFAULT;
+static uint8_t speed_pid_item_index = 0U;
+static uint8_t speed_pid_edit_mode = 0U;
+static uint8_t speed_pid_output_enable = 1U;
+
+// 角度环画圆测试状态
+static uint8_t gyro_circle_task_active = 0U;
+static uint32_t gyro_circle_last_tick = 0U;
+static float gyro_circle_target_heading = 0.0f;
+static float gyro_circle_filtered_heading = 0.0f;
+static float gyro_circle_error = 0.0f;
+static float gyro_circle_turn_output = 0.0f;
+static int16_t gyro_circle_pwm_left = 0;
+static int16_t gyro_circle_pwm_right = 0;
+static PID_t gyro_circle_heading_pid;
+
+// Cam Info 追踪状态（短按EC11启停）
+static uint8_t cam_track_active = 0U;
+static uint32_t cam_track_last_tick = 0U;
+static float cam_track_filtered_heading = 0.0f;
+static float cam_track_target_heading = 0.0f;
+static float cam_track_x_error_filtered = 0.0f;
+static float cam_track_steer_output = 0.0f;
+static float cam_track_error = 0.0f;
+static float cam_track_turn_output = 0.0f;
+static int16_t cam_track_pwm_left = 0;
+static int16_t cam_track_pwm_right = 0;
+static PID_t cam_track_steer_pid;
+static PID_t cam_track_heading_pid;
 
 // 外部函数声明
 extern void Gryo_Update(void);
@@ -90,10 +206,15 @@ extern u16 TOF_QuickTest(void);
 static void Menu_DisplayGyroPage(void);
 static void Menu_DisplayEc11TestPage(void);
 static void Menu_DisplayTofTestPage(void);
+static void Menu_DisplayUltrasonicTestPage(void);
 static void Menu_DisplayFieldTaskPage(void);
+static void Menu_DisplayRemoteTaskPage(void);
+static void Menu_DisplaySpeedStraightTaskPage(void);
+static void Menu_DisplayGyroCircleTaskPage(void);
 static void Menu_DisplayRemoteKeyTestPage(void);
 static void Menu_DisplayPPMInputTestPage(void);
 static void Menu_DisplaySBUSInputTestPage(void);
+static void Menu_DisplayCamInfoPage(void);
 static void Menu_DisplayMotorTestPage(void);
 static void Menu_DisplayEncoderTestPage(void);
 static void Menu_DisplayAdcTestPage(void);
@@ -105,6 +226,14 @@ static void Menu_DisplayCurrentPage(void);
 static u8 Menu_IsPPMDriverLinked(void);
 static u8 Menu_IsSBUSDriverLinked(void);
 static CarTaskModeTypeDef Menu_GetPendingTaskMode(void);
+static int16_t Menu_ClampMotorPwm(int32_t pwm);
+static float Menu_ClampFloat(float value, float min_value, float max_value);
+static float Menu_NormalizeAngle(float angle);
+static void Menu_SpeedPid_SetOutputEnable(uint8_t enable);
+static void Menu_StopSpeedStraightTask(void);
+static void Menu_StopGyroCircleTask(void);
+static void Menu_StopCamTrack(void);
+static void Menu_UpdateCamTrack(void);
 
 /**
  * @brief 判断PPM驱动是否已链接到当前工程
@@ -122,6 +251,306 @@ static u8 Menu_IsSBUSDriverLinked(void) {
     return 1U;
 }
 
+static int16_t Menu_ClampMotorPwm(int32_t pwm) {
+    if (pwm > 1000) {
+        pwm = 1000;
+    } else if (pwm < -1000) {
+        pwm = -1000;
+    }
+    return (int16_t)pwm;
+}
+
+static float Menu_ClampFloat(float value, float min_value, float max_value) {
+    if (value > max_value) {
+        value = max_value;
+    } else if (value < min_value) {
+        value = min_value;
+    }
+    return value;
+}
+
+static float Menu_NormalizeAngle(float angle) {
+    while (angle > 180.0f) {
+        angle -= 360.0f;
+    }
+    while (angle <= -180.0f) {
+        angle += 360.0f;
+    }
+    return angle;
+}
+
+/**
+ * @brief 采集调试串口需要的状态快照
+ * @note 仅做只读拷贝，不做耗时计算
+ */
+void Menu_Debug_GetState(MenuDebugState_t *out) {
+    const Cam_Recv_Data_t *cam;
+
+    if (out == NULL) {
+        return;
+    }
+
+    /* 摄像头在线状态单独取一次，避免重复调用 */
+    cam = Cam_Uart_Get();
+
+    out->tick_ms = HAL_GetTick();
+    out->system_mode = system_mode;
+    out->page = (uint8_t)menuState.currentPage;
+    out->gyro_ready = gyro_initialized;
+    out->cam_online = (cam != NULL) ? cam->is_online : 0U;
+
+    out->yaw_deg = fYaw;
+    out->gyro_x_dps = fGyro[0];
+    out->gyro_y_dps = fGyro[1];
+    out->gyro_z_dps = fGyro[2];
+    out->acc_x_g = fAcc[0];
+    out->acc_y_g = fAcc[1];
+    out->acc_z_g = fAcc[2];
+
+    /* 电机调试页使用的四路目标速度 */
+    out->motor_fl = motor_speeds[0];
+    out->motor_fr = motor_speeds[1];
+    out->motor_bl = motor_speeds[2];
+    out->motor_br = motor_speeds[3];
+
+    /* 速度环核心状态：目标、测量、输出、PID参数 */
+    out->speed_target_cps = speed_straight_target_cps;
+    out->speed_meas_left_cps = speed_straight_meas_left;
+    out->speed_meas_right_cps = speed_straight_meas_right;
+    out->speed_pwm_left = speed_straight_pwm_left;
+    out->speed_pwm_right = speed_straight_pwm_right;
+    out->speed_kp = speed_straight_pid_kp;
+    out->speed_ki = speed_straight_pid_ki;
+    out->speed_kd = speed_straight_pid_kd;
+    out->speed_output_enable = speed_pid_output_enable;
+
+    /* 画圆角度环核心状态 */
+    out->circle_target_heading = gyro_circle_target_heading;
+    out->circle_filtered_heading = gyro_circle_filtered_heading;
+    out->circle_error = gyro_circle_error;
+    out->circle_pwm_left = gyro_circle_pwm_left;
+    out->circle_pwm_right = gyro_circle_pwm_right;
+    out->circle_kp = gyro_circle_heading_pid.kp;
+    out->circle_ki = gyro_circle_heading_pid.ki;
+    out->circle_kd = gyro_circle_heading_pid.kd;
+}
+
+/**
+ * @brief 外部调试接口：动态更新速度环PID参数
+ * @param mask 控制本次需要更新的字段
+ */
+uint8_t Menu_Debug_SetSpeedPid(float kp, float ki, float kd, float target_cps,
+                               uint8_t output_enable, uint8_t mask) {
+    /* 按位掩码更新参数，便于上位机一次只改一个参数 */
+    if ((mask & MENU_DEBUG_PID_MASK_KP) != 0U) {
+        speed_straight_pid_kp = Menu_ClampFloat(kp, MENU_SPEED_PID_KP_MIN, MENU_SPEED_PID_KP_MAX);
+    }
+    if ((mask & MENU_DEBUG_PID_MASK_KI) != 0U) {
+        speed_straight_pid_ki = Menu_ClampFloat(ki, MENU_SPEED_PID_KI_MIN, MENU_SPEED_PID_KI_MAX);
+    }
+    if ((mask & MENU_DEBUG_PID_MASK_KD) != 0U) {
+        speed_straight_pid_kd = Menu_ClampFloat(kd, MENU_SPEED_PID_KD_MIN, MENU_SPEED_PID_KD_MAX);
+    }
+    if ((mask & MENU_DEBUG_PID_MASK_TARGET) != 0U) {
+        speed_straight_target_cps = Menu_ClampFloat(target_cps, MENU_SPEED_TARGET_CPS_MIN, MENU_SPEED_TARGET_CPS_MAX);
+    }
+    if ((mask & MENU_DEBUG_PID_MASK_ENABLE) != 0U) {
+        /* 切换使能时走统一入口，保证内部状态一起复位 */
+        Menu_SpeedPid_SetOutputEnable(output_enable);
+    } else {
+        /* 未切换使能时，直接热更新当前PID结构体系数 */
+        speed_straight_left_pid.kp = speed_straight_pid_kp;
+        speed_straight_left_pid.ki = speed_straight_pid_ki;
+        speed_straight_left_pid.kd = speed_straight_pid_kd;
+        speed_straight_right_pid.kp = speed_straight_pid_kp;
+        speed_straight_right_pid.ki = speed_straight_pid_ki;
+        speed_straight_right_pid.kd = speed_straight_pid_kd;
+    }
+
+    return 1U;
+}
+
+/**
+ * @brief 外部调试接口：动态更新画圆角度环PID参数
+ * @param mask 控制本次需要更新的字段
+ */
+uint8_t Menu_Debug_SetCirclePid(float kp, float ki, float kd, uint8_t mask) {
+    /* 画圆角度环同样支持按位热更新 */
+    if ((mask & MENU_DEBUG_PID_MASK_KP) != 0U) {
+        gyro_circle_heading_pid.kp = Menu_ClampFloat(kp, MENU_CIRCLE_PID_KP_MIN, MENU_CIRCLE_PID_KP_MAX);
+    }
+    if ((mask & MENU_DEBUG_PID_MASK_KI) != 0U) {
+        gyro_circle_heading_pid.ki = Menu_ClampFloat(ki, MENU_CIRCLE_PID_KI_MIN, MENU_CIRCLE_PID_KI_MAX);
+    }
+    if ((mask & MENU_DEBUG_PID_MASK_KD) != 0U) {
+        gyro_circle_heading_pid.kd = Menu_ClampFloat(kd, MENU_CIRCLE_PID_KD_MIN, MENU_CIRCLE_PID_KD_MAX);
+    }
+
+    return 1U;
+}
+
+static void Menu_SpeedPid_SetOutputEnable(uint8_t enable) {
+    speed_pid_output_enable = (enable != 0U) ? 1U : 0U;
+
+    PID_Reset(&speed_straight_left_pid);
+    PID_Reset(&speed_straight_right_pid);
+    speed_straight_meas_left = 0.0f;
+    speed_straight_meas_right = 0.0f;
+    speed_straight_pwm_left = 0;
+    speed_straight_pwm_right = 0;
+    speed_straight_last_enc_left = 0;
+    speed_straight_last_enc_right = 0;
+    speed_straight_last_tick = HAL_GetTick();
+    (void)Encoder_GetCount(ENCODER_1);
+    (void)Encoder_GetCount(ENCODER_2);
+
+    if (speed_pid_output_enable == 0U) {
+        Motor_StopAll();
+    }
+}
+
+static void Menu_StopSpeedStraightTask(void) {
+    if (speed_straight_task_active != 0U) {
+        speed_straight_task_active = 0U;
+        speed_straight_last_tick = 0U;
+        speed_straight_last_enc_left = 0;
+        speed_straight_last_enc_right = 0;
+        speed_straight_meas_left = 0.0f;
+        speed_straight_meas_right = 0.0f;
+        speed_straight_pwm_left = 0;
+        speed_straight_pwm_right = 0;
+        PID_Reset(&speed_straight_left_pid);
+        PID_Reset(&speed_straight_right_pid);
+    }
+    speed_pid_item_index = MENU_SPEED_PID_ITEM_TARGET;
+    speed_pid_edit_mode = 0U;
+    speed_pid_output_enable = 1U;
+    Motor_StopAll();
+}
+
+static void Menu_StopGyroCircleTask(void) {
+    if (gyro_circle_task_active != 0U) {
+        gyro_circle_task_active = 0U;
+        gyro_circle_last_tick = 0U;
+        gyro_circle_target_heading = 0.0f;
+        gyro_circle_filtered_heading = 0.0f;
+        gyro_circle_error = 0.0f;
+        gyro_circle_turn_output = 0.0f;
+        gyro_circle_pwm_left = 0;
+        gyro_circle_pwm_right = 0;
+        PID_Reset(&gyro_circle_heading_pid);
+    }
+    Motor_StopAll();
+}
+
+static void Menu_StopCamTrack(void) {
+    cam_track_active = 0U;
+    cam_track_last_tick = 0U;
+    cam_track_filtered_heading = 0.0f;
+    cam_track_target_heading = 0.0f;
+    cam_track_x_error_filtered = 0.0f;
+    cam_track_steer_output = 0.0f;
+    cam_track_error = 0.0f;
+    cam_track_turn_output = 0.0f;
+    cam_track_pwm_left = 0;
+    cam_track_pwm_right = 0;
+    PID_Reset(&cam_track_steer_pid);
+    PID_Reset(&cam_track_heading_pid);
+    Motor_StopAll();
+}
+
+static void Menu_UpdateCamTrack(void) {
+    const Cam_Recv_Data_t *cam;
+    uint32_t now_tick;
+    uint32_t dt_ms;
+    float heading_raw;
+    float heading_delta;
+    float target_delta;
+    float x_error;
+    float desired_offset_deg;
+    float desired_target_heading;
+
+    if (cam_track_active == 0U) {
+        return;
+    }
+
+    now_tick = HAL_GetTick();
+    dt_ms = now_tick - cam_track_last_tick;
+    if (dt_ms < MENU_CIRCLE_CTRL_PERIOD_MS) {
+        return;
+    }
+
+    if (dt_ms > 300U) {
+        PID_Reset(&cam_track_steer_pid);
+        PID_Reset(&cam_track_heading_pid);
+        cam_track_target_heading = cam_track_filtered_heading;
+        cam_track_x_error_filtered = 0.0f;
+        cam_track_steer_output = 0.0f;
+        cam_track_error = 0.0f;
+        cam_track_turn_output = 0.0f;
+        cam_track_pwm_left = 0;
+        cam_track_pwm_right = 0;
+        Motor_StopAll();
+        cam_track_last_tick = now_tick;
+        return;
+    }
+
+    Menu_Gryo_Update();
+    heading_raw = Menu_NormalizeAngle(fAngle[2]);
+    heading_delta = Menu_NormalizeAngle(heading_raw - cam_track_filtered_heading);
+    cam_track_filtered_heading = Menu_NormalizeAngle(
+        cam_track_filtered_heading + heading_delta * MENU_CIRCLE_HEADING_LPF_ALPHA);
+
+    cam = Cam_Uart_Get();
+    if ((cam->is_online != 0U) &&
+        (cam->class_id == CAM_CLASS_BOTTLE) &&
+        ((cam->flag == CAM_FLAG_TRACKING) || (cam->flag == CAM_FLAG_PREDICTING))) {
+        x_error = (float)cam->x - (float)MENU_CAM_TRACK_CENTER_X;
+        if ((x_error > -(float)MENU_CAM_TRACK_X_DEADBAND) &&
+            (x_error < (float)MENU_CAM_TRACK_X_DEADBAND)) {
+            x_error = 0.0f;
+        }
+        cam_track_x_error_filtered += (x_error - cam_track_x_error_filtered) * 0.25f;
+
+        // 外环：摄像头转向环（x误差 -> 目标偏航角）
+        cam_track_steer_output = PID_Calc(&cam_track_steer_pid, cam_track_x_error_filtered, 0.0f);
+        desired_offset_deg = Menu_ClampFloat(
+            cam_track_steer_output,
+            -MENU_CAM_TRACK_X_MAX_DEG, MENU_CAM_TRACK_X_MAX_DEG);
+        desired_target_heading = Menu_NormalizeAngle(cam_track_filtered_heading + desired_offset_deg);
+        target_delta = Menu_NormalizeAngle(desired_target_heading - cam_track_target_heading);
+        target_delta = Menu_ClampFloat(
+            target_delta, -MENU_CAM_TRACK_TARGET_STEP_MAX_DEG, MENU_CAM_TRACK_TARGET_STEP_MAX_DEG);
+        cam_track_target_heading = Menu_NormalizeAngle(cam_track_target_heading + target_delta);
+
+        // 内环：陀螺仪角度环（目标偏航角 -> 差速输出）
+        cam_track_error = Menu_NormalizeAngle(cam_track_target_heading - cam_track_filtered_heading);
+        cam_track_turn_output = PID_Calc(&cam_track_heading_pid, -cam_track_error, 0.0f);
+
+        cam_track_pwm_left = Menu_ClampMotorPwm((int32_t)((float)MENU_CAM_TRACK_BASE_PWM - cam_track_turn_output));
+        cam_track_pwm_right = Menu_ClampMotorPwm((int32_t)((float)MENU_CAM_TRACK_BASE_PWM + cam_track_turn_output));
+
+        Motor_SetSpeed(MOTOR_FRONT_LEFT, 0);
+        Motor_SetSpeed(MOTOR_FRONT_RIGHT, 0);
+        Motor_SetSpeed(MOTOR_BACK_LEFT, cam_track_pwm_left);
+        Motor_SetSpeed(MOTOR_BACK_RIGHT, cam_track_pwm_right);
+    } else {
+        // 丢目标静止，不再原地转圈
+        PID_Reset(&cam_track_steer_pid);
+        PID_Reset(&cam_track_heading_pid);
+        cam_track_target_heading = cam_track_filtered_heading;
+        cam_track_x_error_filtered = 0.0f;
+        cam_track_steer_output = 0.0f;
+        cam_track_error = 0.0f;
+        cam_track_turn_output = 0.0f;
+        cam_track_pwm_left = 0;
+        cam_track_pwm_right = 0;
+        Motor_StopAll();
+    }
+
+    cam_track_last_tick = now_tick;
+}
+
 /**
  * @brief 根据当前菜单位置决定即将启动的任务模式
  * @retval 小车任务模式
@@ -133,8 +562,17 @@ static CarTaskModeTypeDef Menu_GetPendingTaskMode(void) {
         return CAR_TASK_MODE_FIELD_SCAN;
     }
 
+    if ((menuState.currentPage == MENU_PAGE_MAIN) &&
+        (mainMenuItems[menuState.currentItem].page == MENU_PAGE_REMOTE_TASK)) {
+        return CAR_TASK_MODE_REMOTE;
+    }
+
     if (menuState.currentPage == MENU_PAGE_FIELD_TASK) {
         return CAR_TASK_MODE_FIELD_SCAN;
+    }
+
+    if (menuState.currentPage == MENU_PAGE_REMOTE_TASK) {
+        return CAR_TASK_MODE_REMOTE;
     }
 
     return CAR_TASK_MODE_STRAIGHT;
@@ -258,6 +696,7 @@ uint8_t Menu_InitGyro(void) {
     
     // 尝试初始化 ICM42670
     if (ICM42670_Init()) {
+        Gyro_Filter_Reset();  // 进入陀螺仪页面时重置控制层滤波状态
         current_gyro_type = GYRO_TYPE_ICM42670;
         gyro_initialized = 1;
         return 1;
@@ -265,6 +704,7 @@ uint8_t Menu_InitGyro(void) {
     
     // 如果 ICM42670 失败，尝试初始化串口陀螺仪（WIT）
     Gryo_init();  // 串口陀螺仪初始化
+    Gyro_Filter_Reset();
     current_gyro_type = GYRO_TYPE_WIT;
     gyro_initialized = 1;
     return 1;
@@ -361,6 +801,8 @@ void Menu_Gryo_Update(void) {
         case GYRO_TYPE_ICM42670:
             // 使用 ICM42670 陀螺仪
             ICM42670_Gryo_Update();
+            // 在控制层做二次滤波与姿态融合，抑制抖动和积分漂移
+            Gyro_Filter_Update(fAcc, fGyro, fAngle, &fYaw);
             break;
         case GYRO_TYPE_WIT:
             // 使用原来的陀螺仪
@@ -376,9 +818,14 @@ void Menu_Gryo_Update(void) {
 // 主菜单项目定义
 const MenuItem mainMenuItems[] = {
     {"Gyro Info", MENU_PAGE_GYRO},
+    {"Cam Info", MENU_PAGE_CAM_INFO},
     {"EC11 Test", MENU_PAGE_EC11_TEST},
     {"TOF Test", MENU_PAGE_TOF_TEST},
-    {"Field Task", MENU_PAGE_FIELD_TASK},
+    {"SR04 Test", MENU_PAGE_SR04_TEST},
+    {"Task IF", MENU_PAGE_FIELD_TASK},
+    {"Remote Task", MENU_PAGE_REMOTE_TASK},
+    {"PID Tune", MENU_PAGE_SPEED_STRAIGHT_TASK},
+    {"Gyro Circle", MENU_PAGE_GYRO_CIRCLE_TASK},
     {"Remote Key Test", MENU_PAGE_REMOTE_KEY_TEST},
     {"PPM In Test", MENU_PAGE_PPM_INPUT_TEST},
     {"SBUS In Test", MENU_PAGE_SBUS_INPUT_TEST},
@@ -405,6 +852,7 @@ void Menu_Init(void) {
     menuState.currentItem = 0;
     menuState.lastEncoderCount = 0;
     menuState.isInMenu = 1;
+    menu_last_page = MENU_PAGE_MAIN;
 
     // 初始化输入处理
     MenuInput_Init();
@@ -452,6 +900,7 @@ static void Menu_RunMainTask(void) {
 void Menu_Run(void) {
 #if OLED_UI_MODE == OLED_UI_MODE_LVGL
     MenuUiMenLvg_Run();
+    Debug_Uart_Task();
     return;
 #endif
 
@@ -468,6 +917,9 @@ void Menu_Run(void) {
         if (key_pc6_event == 1) {
             if (system_mode == 0) {
                 // 短按：启动主任务
+                Menu_StopSpeedStraightTask();
+                Menu_StopGyroCircleTask();
+                Menu_StopCamTrack();
                 Menu_RunMainTask();
             } else {
                 // 任务模式下短按：停止主任务
@@ -487,9 +939,24 @@ void Menu_Run(void) {
     
     // 检查任务模式
     if (system_mode == 1) {
+        if (Car_Task_IsRunning() == 0U) {
+            system_mode = 0;
+            OLED_Clear(0);
+            Debug_Uart_Task();
+            return;
+        }
+
         // 执行car_task主函数
         Car_Task_Main();
-        
+
+        if (Car_Task_IsRunning() == 0U) {
+            system_mode = 0;
+            OLED_Clear(0);
+            Debug_Uart_Task();
+            return;
+        }
+
+        Debug_Uart_Task();
         // 短暂延迟，避免执行过快
         HAL_Delay(5);
         
@@ -510,12 +977,25 @@ void Menu_Run(void) {
     if (keyEvent != 0) {
         MenuInput_HandleKeyEvent(keyEvent);
     }
+
+    if (menu_last_page != menuState.currentPage) {
+        if (menu_last_page == MENU_PAGE_SPEED_STRAIGHT_TASK) {
+            Menu_StopSpeedStraightTask();
+        } else if (menu_last_page == MENU_PAGE_GYRO_CIRCLE_TASK) {
+            Menu_StopGyroCircleTask();
+        } else if (menu_last_page == MENU_PAGE_CAM_INFO) {
+            Menu_StopCamTrack();
+        }
+        menu_last_page = menuState.currentPage;
+    }
     
     // 扫描遥控器按键状态
     MenuInput_ScanRemoteKey();
     
     // 显示当前页面
     Menu_DisplayCurrentPage();
+
+    Debug_Uart_Task();
     
     // 短暂延迟，避免显示刷新过快
     HAL_Delay(5);
@@ -564,6 +1044,119 @@ const MenuItem* Menu_GetMainItem(uint8_t index) {
 }
 
 /**
+ * @brief PID调试页面处理编码器增量
+ * @param delta 编码器增量（正值顺时针，负值逆时针）
+ */
+void Menu_SpeedPid_HandleEncoderDelta(int32_t delta) {
+    int8_t step_dir = 0;
+    uint8_t prev_output_enable;
+
+    if (delta > 0) {
+        step_dir = 1;
+    } else if (delta < 0) {
+        step_dir = -1;
+    } else {
+        return;
+    }
+
+    if (speed_pid_edit_mode == 0U) {
+        if (step_dir > 0) {
+            speed_pid_item_index = (uint8_t)((speed_pid_item_index + 1U) % MENU_SPEED_PID_ITEM_COUNT);
+        } else {
+            speed_pid_item_index = (uint8_t)((speed_pid_item_index + MENU_SPEED_PID_ITEM_COUNT - 1U) %
+                                             MENU_SPEED_PID_ITEM_COUNT);
+        }
+        return;
+    }
+
+    prev_output_enable = speed_pid_output_enable;
+
+    switch ((MenuSpeedPidItemType)speed_pid_item_index) {
+        case MENU_SPEED_PID_ITEM_TARGET:
+            speed_straight_target_cps = Menu_ClampFloat(
+                speed_straight_target_cps + (float)step_dir * MENU_SPEED_TARGET_CPS_STEP,
+                MENU_SPEED_TARGET_CPS_MIN, MENU_SPEED_TARGET_CPS_MAX);
+            break;
+        case MENU_SPEED_PID_ITEM_KP:
+            speed_straight_pid_kp = Menu_ClampFloat(
+                speed_straight_pid_kp + (float)step_dir * MENU_SPEED_PID_KP_STEP,
+                MENU_SPEED_PID_KP_MIN, MENU_SPEED_PID_KP_MAX);
+            break;
+        case MENU_SPEED_PID_ITEM_KI:
+            speed_straight_pid_ki = Menu_ClampFloat(
+                speed_straight_pid_ki + (float)step_dir * MENU_SPEED_PID_KI_STEP,
+                MENU_SPEED_PID_KI_MIN, MENU_SPEED_PID_KI_MAX);
+            break;
+        case MENU_SPEED_PID_ITEM_KD:
+            speed_straight_pid_kd = Menu_ClampFloat(
+                speed_straight_pid_kd + (float)step_dir * MENU_SPEED_PID_KD_STEP,
+                MENU_SPEED_PID_KD_MIN, MENU_SPEED_PID_KD_MAX);
+            break;
+        case MENU_SPEED_PID_ITEM_RUN:
+            speed_pid_output_enable = (step_dir > 0) ? 1U : 0U;
+            break;
+        case MENU_SPEED_PID_ITEM_COUNT:
+        default:
+            break;
+    }
+
+    if (prev_output_enable != speed_pid_output_enable) {
+        Menu_SpeedPid_SetOutputEnable(speed_pid_output_enable);
+    }
+}
+
+/**
+ * @brief PID调试页面处理短按事件
+ */
+void Menu_SpeedPid_HandleShortPress(void) {
+    if (speed_pid_item_index == MENU_SPEED_PID_ITEM_RUN) {
+        Menu_SpeedPid_SetOutputEnable((uint8_t)(!speed_pid_output_enable));
+        return;
+    }
+
+    speed_pid_edit_mode = (uint8_t)(!speed_pid_edit_mode);
+}
+
+/**
+ * @brief Cam Info 页面处理短按事件（开始/停止追踪）
+ */
+void Menu_CamTrack_HandleShortPress(void) {
+    float heading_raw;
+
+    if (cam_track_active != 0U) {
+        Menu_StopCamTrack();
+        return;
+    }
+
+    Motor_Init();
+    if (!gyro_initialized) {
+        (void)Menu_InitGyro();
+    }
+
+    Menu_Gryo_Update();
+    heading_raw = Menu_NormalizeAngle(fAngle[2]);
+    cam_track_filtered_heading = heading_raw;
+    cam_track_target_heading = heading_raw;
+    cam_track_x_error_filtered = 0.0f;
+
+    PID_Init(&cam_track_steer_pid,
+             MENU_CAM_TRACK_STEER_KP, MENU_CAM_TRACK_STEER_KI, MENU_CAM_TRACK_STEER_KD,
+             MENU_CAM_TRACK_STEER_OUT_MAX, MENU_CAM_TRACK_STEER_OUT_MIN);
+    PID_Reset(&cam_track_steer_pid);
+    PID_Init(&cam_track_heading_pid, MENU_CAM_TRACK_HEADING_KP, MENU_CIRCLE_PID_KI, MENU_CIRCLE_PID_KD,
+             MENU_CAM_TRACK_HEADING_OUT_MAX, MENU_CAM_TRACK_HEADING_OUT_MIN);
+    PID_Reset(&cam_track_heading_pid);
+
+    cam_track_steer_output = 0.0f;
+    cam_track_error = 0.0f;
+    cam_track_turn_output = 0.0f;
+    cam_track_pwm_left = 0;
+    cam_track_pwm_right = 0;
+    cam_track_last_tick = HAL_GetTick();
+    cam_track_active = 1U;
+}
+
+/**
  * @brief 显示陀螺仪信息页面
  */
 static void Menu_DisplayGyroPage(void) {
@@ -586,19 +1179,27 @@ static void Menu_DisplayGyroPage(void) {
     sprintf(str1, "%.1f", fYaw);
     OLED_ShowString_Reverse(strlen(str)*8, 0, str1, 16);
     
-    sprintf(str, "x:%.1f", fAngle[0]);
+    sprintf(str, " gx:%.1f", fGyro[0]);
+    OLED_ShowString(63, 2, str, 12);
+    sprintf(str, " gy:%.1f", fGyro[1]);
+    OLED_ShowString(63, 3, str, 12);
+    sprintf(str, " gz:%.1f", fGyro[2]);
+    OLED_ShowString(63, 4, str, 12);
+
+    sprintf(str, " ax:%.1f", fAcc[0]*10);
+    OLED_ShowString(63, 5, str, 12);
+    sprintf(str, " ay:%.1f", fAcc[1]*10);
+    OLED_ShowString(63, 6, str, 12);
+    sprintf(str, " az:%.1f", fAcc[2]*10);
+    OLED_ShowString(63, 7, str, 12);
+	
+	
+	sprintf(str, "x:%.1f", fAngle[0]);
     OLED_ShowString(0, 2, str, 16);
     sprintf(str, "y:%.1f", fAngle[1]);
     OLED_ShowString(0, 4, str, 16);
     sprintf(str, "z:%.1f", fAngle[2]);
     OLED_ShowString(0, 6, str, 16);
-
-    sprintf(str, " x:%.1f", fAcc[0]*10);
-    OLED_ShowString(63, 2, str, 16);
-    sprintf(str, " y:%.1f", fAcc[1]*10);
-    OLED_ShowString(63, 4, str, 16);
-    sprintf(str, " z:%.1f", fAcc[2]*10);
-    OLED_ShowString(63, 6, str, 16);
     
     // 舵机控制 - 每次最多移动0.5度，2度死区
     extern float servo_current_angle;
@@ -697,19 +1298,297 @@ static void Menu_DisplayTofTestPage(void) {
 }
 
 /**
+ * @brief 显示 SR04 超声波测试页面
+ */
+static void Menu_DisplayUltrasonicTestPage(void) {
+    OLED_Clear(0);
+
+    // 首次进入时初始化 SR04
+    if (!sr04_initialized) {
+        SR04_Init();
+        sr04_initialized = 1U;
+    }
+	
+	u16 distance_mm = 0U;
+	u16 distance_mm_raw = 0U;
+    u8 sr04_status = 0;
+    char str[20];
+	// 读取距离
+//	sr04_status = SR04_ReadDistanceMm(&distance_mm);
+	sr04_status = SR04_ReadDistanceMmFiltered(&distance_mm_raw,&distance_mm);
+
+
+    if (sr04_status == SR04_STATUS_OK) {
+        sprintf(str, "Dist:%4d mm", distance_mm_raw);
+    } else {
+        sprintf(str, "Dist:   -- mm");
+    }
+    OLED_ShowString(0, 0, str, 16);
+	
+    if (sr04_status == SR04_STATUS_OK) {
+        sprintf(str, "DistFL:%4d mm", distance_mm);
+    } else {
+        sprintf(str, "DistFL:   -- mm");
+    }
+    OLED_ShowString(0, 2, str, 16);
+
+    sprintf(str, "Status:%d", sr04_status);
+    OLED_ShowString(0, 4, str, 16);
+
+    // 显示接线与返回提示
+#if SR04_SINGLE_WIRE_ENABLE
+    OLED_ShowString(0, 6, "1W C12 T/E", 12);
+#else
+    OLED_ShowString(0, 6, "C12:T D2:E", 12);
+#endif
+    OLED_ShowString(0, 7, "Long press back", 12);
+
+    OLED_Refresh();
+}
+
+/**
  * @brief 显示水田遍历任务说明页面
  * @note 用于在不改 PC6 按键语义的前提下，给用户一个明确的新任务选择入口
  */
 static void Menu_DisplayFieldTaskPage(void) {
     OLED_Clear(0);
 
-    OLED_ShowString(0, 0, "Field Task", 16);
+    OLED_ShowString(0, 0, "Task Interface", 16);
     OLED_ShowString(0, 2, "PC6:Start/Stop", 12);
-    OLED_ShowString(0, 3, "TOF:Obstacle", 12);
+    OLED_ShowString(0, 3, "Mode:Field Scan", 12);
     OLED_ShowString(0, 4, "Gyro:WIT PID", 12);
-    OLED_ShowString(0, 5, "Rear motor only", 12);
+    OLED_ShowString(0, 5, "ENC:Fixed Dist", 12);
+    OLED_ShowString(0, 6, "Auto U-turn", 12);
     OLED_ShowString(0, 7, "Long press back", 12);
 
+    OLED_Refresh();
+}
+
+/**
+ * @brief 显示远程控制任务说明页面
+ * @note 通过 PC6 启动后进入 car_task 的 remote 模式，使用 PS2 右摇杆验证运动算法
+ */
+static void Menu_DisplayRemoteTaskPage(void) {
+    OLED_Clear(0);
+
+    OLED_ShowString(0, 0, "Remote Task", 16);
+    OLED_ShowString(0, 2, "PC6:Start/Stop", 12);
+    OLED_ShowString(0, 3, "PS2 Right Stick", 12);
+    OLED_ShowString(0, 4, "Speed PID Loop", 12);
+    OLED_ShowString(0, 5, "Show PWM/SPD", 12);
+    OLED_ShowString(0, 7, "Long press back", 12);
+
+    OLED_Refresh();
+}
+
+/**
+ * @brief 编码器速度环闭环直线测试页面
+ * @note 支持在线调节后轮速度环 PID 和目标转速，用于双后轮匀速前进调试
+ */
+static void Menu_DisplaySpeedStraightTaskPage(void) {
+    char str[24];
+    char marker;
+    uint32_t now_tick;
+    uint32_t dt_ms;
+    float dt_s;
+    int32_t enc_left_delta;
+    int32_t enc_right_delta;
+
+    if (speed_straight_task_active == 0U) {
+        Motor_Init();
+        Encoder_Init();
+
+        PID_Init(&speed_straight_left_pid, speed_straight_pid_kp, speed_straight_pid_ki, speed_straight_pid_kd,
+                 MENU_SPEED_PID_OUT_MAX, MENU_SPEED_PID_OUT_MIN);
+        PID_Init(&speed_straight_right_pid, speed_straight_pid_kp, speed_straight_pid_ki, speed_straight_pid_kd,
+                 MENU_SPEED_PID_OUT_MAX, MENU_SPEED_PID_OUT_MIN);
+        Menu_SpeedPid_SetOutputEnable(speed_pid_output_enable);
+        speed_straight_task_active = 1U;
+    }
+
+    now_tick = HAL_GetTick();
+    dt_ms = now_tick - speed_straight_last_tick;
+    if (dt_ms >= MENU_SPEED_TEST_PERIOD_MS) {
+        if (dt_ms > 300U) {
+            PID_Reset(&speed_straight_left_pid);
+            PID_Reset(&speed_straight_right_pid);
+            speed_straight_meas_left = 0.0f;
+            speed_straight_meas_right = 0.0f;
+            speed_straight_pwm_left = 0;
+            speed_straight_pwm_right = 0;
+            speed_straight_last_enc_left = 0;
+            speed_straight_last_enc_right = 0;
+            (void)Encoder_GetCount(ENCODER_1);
+            (void)Encoder_GetCount(ENCODER_2);
+            Motor_StopAll();
+        } else if (speed_pid_output_enable != 0U) {
+            dt_s = (float)dt_ms / 1000.0f;
+            enc_left_delta = Encoder_GetCount(ENCODER_1);
+            enc_right_delta = Encoder_GetCount(ENCODER_2);
+
+            speed_straight_last_enc_left = enc_left_delta;
+            speed_straight_last_enc_right = enc_right_delta;
+
+            speed_straight_meas_left = MENU_SPEED_ENCODER_LEFT_SIGN * ((float)enc_left_delta / dt_s);
+            speed_straight_meas_right = MENU_SPEED_ENCODER_RIGHT_SIGN * ((float)enc_right_delta / dt_s);
+
+            speed_straight_left_pid.kp = speed_straight_pid_kp;
+            speed_straight_left_pid.ki = speed_straight_pid_ki;
+            speed_straight_left_pid.kd = speed_straight_pid_kd;
+            speed_straight_right_pid.kp = speed_straight_pid_kp;
+            speed_straight_right_pid.ki = speed_straight_pid_ki;
+            speed_straight_right_pid.kd = speed_straight_pid_kd;
+
+            speed_straight_pwm_left = Menu_ClampMotorPwm((int32_t)PID_Calc(
+                &speed_straight_left_pid, speed_straight_meas_left, speed_straight_target_cps));
+            speed_straight_pwm_right = Menu_ClampMotorPwm((int32_t)PID_Calc(
+                &speed_straight_right_pid, speed_straight_meas_right, speed_straight_target_cps));
+
+            Motor_SetSpeed(MOTOR_FRONT_LEFT, 0);
+            Motor_SetSpeed(MOTOR_FRONT_RIGHT, 0);
+            Motor_SetSpeed(MOTOR_BACK_LEFT, speed_straight_pwm_left);
+            Motor_SetSpeed(MOTOR_BACK_RIGHT, speed_straight_pwm_right);
+        } else {
+            (void)Encoder_GetCount(ENCODER_1);
+            (void)Encoder_GetCount(ENCODER_2);
+            speed_straight_meas_left = 0.0f;
+            speed_straight_meas_right = 0.0f;
+            speed_straight_last_enc_left = 0;
+            speed_straight_last_enc_right = 0;
+            speed_straight_pwm_left = 0;
+            speed_straight_pwm_right = 0;
+            Motor_StopAll();
+        }
+        speed_straight_last_tick = now_tick;
+    }
+
+    OLED_Clear(0);
+    OLED_ShowString(0, 0, "PID Motor Tune", 12);
+    OLED_ShowString(0, 1, "SP:Sel/Edit LP:Back", 12);
+
+    marker = (speed_pid_item_index == MENU_SPEED_PID_ITEM_TARGET) ?
+        ((speed_pid_edit_mode != 0U) ? '*' : '>') : ' ';
+    (void)snprintf(str, sizeof(str), "%cT:%+4d cps", marker, (int16_t)speed_straight_target_cps);
+    OLED_ShowString(0, 2, str, 12);
+
+    marker = (speed_pid_item_index == MENU_SPEED_PID_ITEM_KP) ?
+        ((speed_pid_edit_mode != 0U) ? '*' : '>') : ' ';
+    (void)snprintf(str, sizeof(str), "%cKp:%1.3f", marker, speed_straight_pid_kp);
+    OLED_ShowString(0, 3, str, 12);
+
+    marker = (speed_pid_item_index == MENU_SPEED_PID_ITEM_KI) ?
+        ((speed_pid_edit_mode != 0U) ? '*' : '>') : ' ';
+    (void)snprintf(str, sizeof(str), "%cKi:%1.3f", marker, speed_straight_pid_ki);
+    OLED_ShowString(0, 4, str, 12);
+
+    marker = (speed_pid_item_index == MENU_SPEED_PID_ITEM_KD) ?
+        ((speed_pid_edit_mode != 0U) ? '*' : '>') : ' ';
+    (void)snprintf(str, sizeof(str), "%cKd:%1.3f", marker, speed_straight_pid_kd);
+    OLED_ShowString(0, 5, str, 12);
+
+    (void)snprintf(str, sizeof(str), "M:%+4d %+4d",
+                   (int16_t)speed_straight_meas_left, (int16_t)speed_straight_meas_right);
+    OLED_ShowString(0, 6, str, 12);
+
+    marker = (speed_pid_item_index == MENU_SPEED_PID_ITEM_RUN) ?
+        ((speed_pid_edit_mode != 0U) ? '*' : '>') : ' ';
+    (void)snprintf(str, sizeof(str), "%cR:%s P:%+3d %+3d",
+                   marker,
+                   (speed_pid_output_enable != 0U) ? "ON " : "OFF",
+                   speed_straight_pwm_left, speed_straight_pwm_right);
+    OLED_ShowString(0, 7, str, 12);
+    OLED_Refresh();
+}
+
+/**
+ * @brief 陀螺仪角度环画圆测试页面
+ * @note 目标航向按固定角速度连续变化，通过角度环驱动差速画圆
+ */
+static void Menu_DisplayGyroCircleTaskPage(void) {
+    char str[24];
+    uint32_t now_tick;
+    uint32_t dt_ms;
+    float dt_s;
+    float heading_raw;
+    float heading_delta;
+
+    if (gyro_circle_task_active == 0U) {
+        Motor_Init();
+
+        if (!gyro_initialized) {
+            (void)Menu_InitGyro();
+        }
+
+        Menu_Gryo_Update();
+        heading_raw = Menu_NormalizeAngle(fAngle[2]);
+        gyro_circle_filtered_heading = heading_raw;
+        gyro_circle_target_heading = heading_raw;
+        gyro_circle_error = 0.0f;
+        gyro_circle_turn_output = 0.0f;
+        gyro_circle_pwm_left = 0;
+        gyro_circle_pwm_right = 0;
+
+        PID_Init(&gyro_circle_heading_pid, MENU_CIRCLE_PID_KP, MENU_CIRCLE_PID_KI, MENU_CIRCLE_PID_KD,
+                 MENU_CIRCLE_PID_OUT_MAX, MENU_CIRCLE_PID_OUT_MIN);
+        PID_Reset(&gyro_circle_heading_pid);
+
+        gyro_circle_last_tick = HAL_GetTick();
+        gyro_circle_task_active = 1U;
+    }
+
+    now_tick = HAL_GetTick();
+    dt_ms = now_tick - gyro_circle_last_tick;
+    if (dt_ms >= MENU_CIRCLE_CTRL_PERIOD_MS) {
+        if (dt_ms > 300U) {
+            PID_Reset(&gyro_circle_heading_pid);
+            gyro_circle_turn_output = 0.0f;
+            gyro_circle_pwm_left = 0;
+            gyro_circle_pwm_right = 0;
+            Motor_StopAll();
+        } else {
+            dt_s = (float)dt_ms / 1000.0f;
+
+            Menu_Gryo_Update();
+            heading_raw = Menu_NormalizeAngle(fAngle[2]);
+            heading_delta = Menu_NormalizeAngle(heading_raw - gyro_circle_filtered_heading);
+            gyro_circle_filtered_heading = Menu_NormalizeAngle(
+                gyro_circle_filtered_heading + heading_delta * MENU_CIRCLE_HEADING_LPF_ALPHA);
+
+            gyro_circle_target_heading = Menu_NormalizeAngle(
+                gyro_circle_target_heading + MENU_CIRCLE_TARGET_RATE_DPS * dt_s);
+
+            gyro_circle_error = Menu_NormalizeAngle(gyro_circle_target_heading - gyro_circle_filtered_heading);
+            gyro_circle_turn_output = PID_Calc(&gyro_circle_heading_pid, -gyro_circle_error, 0.0f);
+
+            gyro_circle_pwm_left = Menu_ClampMotorPwm((int32_t)((float)MENU_CIRCLE_BASE_PWM - gyro_circle_turn_output));
+            gyro_circle_pwm_right = Menu_ClampMotorPwm((int32_t)((float)MENU_CIRCLE_BASE_PWM + gyro_circle_turn_output));
+
+            Motor_SetSpeed(MOTOR_FRONT_LEFT, 0);
+            Motor_SetSpeed(MOTOR_FRONT_RIGHT, 0);
+            Motor_SetSpeed(MOTOR_BACK_LEFT, gyro_circle_pwm_left);
+            Motor_SetSpeed(MOTOR_BACK_RIGHT, gyro_circle_pwm_right);
+        }
+        gyro_circle_last_tick = now_tick;
+    }
+
+    OLED_Clear(0);
+    OLED_ShowString(0, 0, "Gyro Circle", 16);
+
+    (void)snprintf(str, sizeof(str), "Y:%5.1f T:%5.1f",
+                   gyro_circle_filtered_heading, gyro_circle_target_heading);
+    OLED_ShowString(0, 2, str, 12);
+
+    (void)snprintf(str, sizeof(str), "E:%6.2f U:%6.1f", gyro_circle_error, gyro_circle_turn_output);
+    OLED_ShowString(0, 3, str, 12);
+
+    (void)snprintf(str, sizeof(str), "PWM:%+4d %+4d", gyro_circle_pwm_left, gyro_circle_pwm_right);
+    OLED_ShowString(0, 4, str, 12);
+
+    (void)snprintf(str, sizeof(str), "R:%2dcm W:%3d", (int16_t)MENU_CIRCLE_TARGET_RADIUS_CM,
+                   (int16_t)MENU_CIRCLE_TARGET_RATE_DPS);
+    OLED_ShowString(0, 5, str, 12);
+
+    OLED_ShowString(0, 7, "Long press back", 12);
     OLED_Refresh();
 }
 
@@ -894,6 +1773,74 @@ static void Menu_DisplaySBUSInputTestPage(void) {
 
     OLED_Refresh();
 }
+
+/**
+ * @brief 显示摄像头调试页面（UART1）
+ */
+static void Menu_DisplayCamInfoPage(void) {
+    Cam_Recv_Data_t cam;
+    const char *class_str = "NO";
+    const char *flag_str = "NO";
+    char str[32];
+
+    if (cam_initialized == 0U) {
+        Cam_Uart_Init();
+        cam_initialized = 1U;
+    }
+
+    /* 200ms未收到有效帧即判离线 */
+    Cam_Uart_Check_Timeout(200U);
+    Menu_UpdateCamTrack();
+    (void)Cam_Uart_Fetch(&cam);
+
+    switch (cam.class_id) {
+        case CAM_CLASS_BOTTLE:
+            class_str = "BOTTLE";
+            break;
+        case CAM_CLASS_GRASS:
+            class_str = "GRASS";
+            break;
+        case CAM_CLASS_OTHER:
+            class_str = "OTHER";
+            break;
+        default:
+            class_str = "NO";
+            break;
+    }
+
+    switch (cam.flag) {
+        case CAM_FLAG_TRACKING:
+            flag_str = "TRK";
+            break;
+        case CAM_FLAG_PREDICTING:
+            flag_str = "PRE";
+            break;
+        default:
+            flag_str = "NO";
+            break;
+    }
+
+    OLED_Clear(0);
+    snprintf(str, sizeof(str), "OK:%lu T:%s SP:Move",
+             (unsigned long)cam.frame_ok,
+             (cam_track_active != 0U) ? "ON" : "OFF");
+    OLED_ShowString(0, 0, str, 12);
+
+    snprintf(str, sizeof(str), "C:%s F:%s", class_str, flag_str);
+    OLED_ShowString(0, 1, str, 16);
+
+    snprintf(str, sizeof(str), "X:%6d", cam.x);
+    OLED_ShowString(0, 3, str, 16);
+
+    snprintf(str, sizeof(str), "Y:%6d", cam.y);
+    OLED_ShowString(0, 5, str, 16);
+
+    snprintf(str, sizeof(str), "L:%+4d R:%+4d", cam_track_pwm_left, cam_track_pwm_right);
+    OLED_ShowString(0, 7, str, 12);
+
+    OLED_Refresh();
+}
+
 /**
  * @brief 显示电机测试页面
  */
@@ -1478,14 +2425,29 @@ static void Menu_DisplayCurrentPage(void) {
         case MENU_PAGE_GYRO:
             Menu_DisplayGyroPage();
             break;
+        case MENU_PAGE_CAM_INFO:
+            Menu_DisplayCamInfoPage();
+            break;
         case MENU_PAGE_EC11_TEST:
             Menu_DisplayEc11TestPage();
             break;
         case MENU_PAGE_TOF_TEST:
             Menu_DisplayTofTestPage();
             break;
+        case MENU_PAGE_SR04_TEST:
+            Menu_DisplayUltrasonicTestPage();
+            break;
         case MENU_PAGE_FIELD_TASK:
             Menu_DisplayFieldTaskPage();
+            break;
+        case MENU_PAGE_REMOTE_TASK:
+            Menu_DisplayRemoteTaskPage();
+            break;
+        case MENU_PAGE_SPEED_STRAIGHT_TASK:
+            Menu_DisplaySpeedStraightTaskPage();
+            break;
+        case MENU_PAGE_GYRO_CIRCLE_TASK:
+            Menu_DisplayGyroCircleTaskPage();
             break;
         case MENU_PAGE_REMOTE_KEY_TEST:
             Menu_DisplayRemoteKeyTestPage();
@@ -1522,5 +2484,6 @@ static void Menu_DisplayCurrentPage(void) {
             break;
     }
 }
+
 
 
