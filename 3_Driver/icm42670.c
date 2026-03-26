@@ -266,14 +266,57 @@ void I2C_Scan(void)
  */
 u8 ICM42670_Check(void)
 {
+    uint8_t ack;
     uint8_t who_am_i;
 
-    if (!ICM42670_ReadWhoAmIStable(&who_am_i)) {
+    printf("ICM42670_Check: Starting I2C communication test...\r\n");
+    printf("Device address: 0x%02X (7-bit: 0x%02X)\r\n", (icm_iic.addr << 1), icm_iic.addr);
+
+    printf("Step 1: Start + Write address...\r\n");
+    soft_iic_start(&icm_iic);
+    soft_iic_send_byte(&icm_iic, (uint8_t)((icm_iic.addr << 1) | 0x00));
+    ack = soft_iic_wait_ack(&icm_iic);
+    printf("  Write address ACK: %d (0=OK, 1=FAIL)\r\n", ack);
+    if (ack) {
+        soft_iic_stop(&icm_iic);
+        printf("  ERROR: Device not responding to write address!\r\n");
+        return 0;
+    }
+
+    printf("Step 2: Send register address 0x%02X...\r\n", ICM42670_WHO_AM_I);
+    soft_iic_send_byte(&icm_iic, ICM42670_WHO_AM_I);
+    ack = soft_iic_wait_ack(&icm_iic);
+    printf("  Register address ACK: %d (0=OK, 1=FAIL)\r\n", ack);
+    if (ack) {
+        soft_iic_stop(&icm_iic);
+        printf("  ERROR: Device not responding to register address!\r\n");
+        return 0;
+    }
+
+    printf("Step 3: Repeated Start + Read address...\r\n");
+    soft_iic_start(&icm_iic);
+    soft_iic_send_byte(&icm_iic, (uint8_t)((icm_iic.addr << 1) | 0x01));
+    ack = soft_iic_wait_ack(&icm_iic);
+    printf("  Read address ACK: %d (0=OK, 1=FAIL)\r\n", ack);
+    if (ack) {
+        soft_iic_stop(&icm_iic);
+        printf("  ERROR: Device not responding to read address!\r\n");
+        return 0;
+    }
+
+    printf("Step 4: Read data...\r\n");
+    who_am_i = soft_iic_read_byte(&icm_iic, 0);
+    soft_iic_stop(&icm_iic);
+
+    printf("WHO_AM_I = 0x%02X\r\n", who_am_i);
+    if (ICM42670_IsInvalidWhoAmI(who_am_i)) {
+        printf("  ERROR: Invalid WHO_AM_I!\r\n");
         return 0;
     }
 
     s_imu_who_am_i = who_am_i;
     s_imu_type = ICM42670_DecodeDeviceType(who_am_i);
+    printf("  Decode type: %s\r\n", ICM42670_GetDeviceName());
     return 1;
 }
 
@@ -307,12 +350,18 @@ u8 ICM42670_Init(void)
 
     delay_ms(30);
 
+    I2C_Scan();
+
     if (!ICM42670_AutoDetect()) {
         printf("IMU detect failed: no valid WHO_AM_I on 0x68/0x69/0x6A/0x6B\r\n");
         return 0;
     }
 
     icm_iic.addr = s_imu_addr;
+    if (!ICM42670_Check()) {
+        printf("IMU check failed at detected address 0x%02X\r\n", s_imu_addr);
+        return 0;
+    }
 
     printf("IMU detected: addr=0x%02X, WHO_AM_I=0x%02X, type=%s\r\n",
            s_imu_addr, s_imu_who_am_i, ICM42670_GetDeviceName());
@@ -500,13 +549,6 @@ void ICM42670_Data_Unit_Convert(void)
  */
 void ICM42670_Gryo_Update(void)
 {
-    static float angle_x = 0.0f;
-    static float angle_y = 0.0f;
-    static float angle_z = 0.0f;
-    static uint32_t last_time = 0;
-    uint32_t current_time;
-    float dt;
-
     ICM42670_Get_All();
     ICM42670_Data_Unit_Convert();
 
@@ -517,29 +559,4 @@ void ICM42670_Gryo_Update(void)
     fGyro[0] = icm42670_gyro_x_dps;
     fGyro[1] = icm42670_gyro_y_dps;
     fGyro[2] = icm42670_gyro_z_dps;
-
-    current_time = HAL_GetTick();
-    if (last_time == 0) {
-        last_time = current_time;
-    }
-    dt = (current_time - last_time) / 1000.0f;
-    last_time = current_time;
-
-    angle_x += fGyro[0] * dt;
-    angle_y += fGyro[1] * dt;
-    angle_z += fGyro[2] * dt;
-
-    if (angle_x > 180.0f) angle_x -= 360.0f;
-    else if (angle_x < -180.0f) angle_x += 360.0f;
-
-    if (angle_y > 180.0f) angle_y -= 360.0f;
-    else if (angle_y < -180.0f) angle_y += 360.0f;
-
-    if (angle_z > 180.0f) angle_z -= 360.0f;
-    else if (angle_z < -180.0f) angle_z += 360.0f;
-
-    fAngle[0] = angle_x;
-    fAngle[1] = angle_y;
-    fAngle[2] = angle_z;
-    fYaw = angle_z;
 }
